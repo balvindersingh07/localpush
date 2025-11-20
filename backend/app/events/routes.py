@@ -134,3 +134,27 @@ def create_event(payload: dict, userId: str = Depends(get_user_id)):
         "message": "Event created successfully",
         "id": str(result.inserted_id)
     }
+# ------------------------------------------------
+# GET ALL STALLS OF EVENT  →  /events/{eventId}/stalls
+# ------------------------------------------------
+@event_router.get("/{eventId}/stalls")
+def get_event_stalls(eventId: str):
+
+    if not ObjectId.is_valid(eventId):
+        raise HTTPException(400, "Invalid eventId")
+
+    stalls = list(db["stalls"].find({"eventId": eventId}))
+
+    # Convert Mongo docs
+    def serialize_stall(s):
+        return {
+            "id": str(s["_id"]),
+            "name": s.get("name") or s.get("stallName") or "",
+            "tier": s.get("tier", "SILVER"),
+            "price": s.get("price", 0),
+            "qtyTotal": s.get("qtyTotal", 0),
+            "qtyLeft": s.get("qtyLeft", 0),
+            "specs": s.get("specs", ""),
+        }
+
+    return {"stalls": [serialize_stall(s) for s in stalls]}
