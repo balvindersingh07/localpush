@@ -11,4 +11,5 @@ email-validator
 pydantic-settings
 passlib
 bcrypt
+cloudinary
 
