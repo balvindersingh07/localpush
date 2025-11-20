@@ -1,3 +1,4 @@
+from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -26,27 +27,27 @@ app = FastAPI(
 # -------------------------------------------------
 
 origins = [
-    "https://localpush.vercel.app",  # your frontend
-    "http://localhost:3000",         # local testing
-    "https://localpush.onrender.com" # backend self-call safety
+    "https://localpush.vercel.app",   # frontend (vercel)
+    "http://localhost:3000",          # local development
+    "https://localpush.onrender.com"  # backend self-allowed
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # specific origins for production
-    allow_credentials=True,      # needed for JWT / cookies
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # -------------------------------------------------
-# 🔥 REGISTER ROUTERS (CLEAN)
+# 🔥 REGISTER ROUTERS (ALL ROUTES CLEAN)
 # -------------------------------------------------
 
 # AUTH
 app.include_router(auth_router, prefix="/auth")
 
-# EVENTS (event list, details etc.)
+# EVENTS
 app.include_router(event_router, prefix="/events")
 
 # STALLS (events/:id/stalls)
@@ -64,12 +65,11 @@ app.include_router(creator_router, prefix="/creator")
 # ADMIN
 app.include_router(admin_router, prefix="/admin")
 
-# ADMIN KYC
+# ADMIN KYC (CORRECTED PREFIX)
 app.include_router(admin_kyc_router, prefix="/admin/kyc")
 
 # CHATBOT
 app.include_router(chatbot_router, prefix="/chatbot")
-
 
 # -------------------------------------------------
 # 🏠 ROOT ENDPOINT
@@ -77,7 +77,6 @@ app.include_router(chatbot_router, prefix="/chatbot")
 @app.get("/")
 def root():
     return {"message": "Sharthi API is running successfully!"}
-
 
 # -------------------------------------------------
 # 🚀 MAIN ENTRY POINT (REQUIRED BY RENDER)

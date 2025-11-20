@@ -1,3 +1,8 @@
+/** 
+ * 100% FIXED + BACKEND COMPATIBLE
+ * CREATOR PROFILE PAGE
+ */
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
@@ -31,18 +36,16 @@ import { toast } from "sonner";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-function getToken(): string | null {
-  try {
-    return (
-      localStorage.getItem("jwt") ||
-      localStorage.getItem("sharthi_token")
-    );
-  } catch {
-    return null;
-  }
+/* GET TOKEN */
+function getToken() {
+  return (
+    localStorage.getItem("jwt") ||
+    localStorage.getItem("sharthi_token")
+  );
 }
 
-async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+/* API WRAPPER */
+async function api(path, init = {}) {
   const headers = new Headers(init.headers);
   const token = getToken();
 
@@ -52,89 +55,102 @@ async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const res = await fetch(`${API}${path}`, { ...init, headers });
+
   if (!res.ok) {
-    let msg = res.statusText;
+    let msg = "Error";
     try {
-      const t = await res.json();
-      msg = t?.message || t?.error || msg;
+      const err = await res.json();
+      msg = err.message || err.error || msg;
     } catch {}
     throw new Error(msg);
   }
+
   return res.json();
 }
 
-// --------------------------------------------------------
-// COMPONENT
-// --------------------------------------------------------
+/* =======================================================
+   COMPONENT
+======================================================= */
 export function CreatorProfile() {
-  const [authMissing, setAuthMissing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [authMissing, setAuthMissing] = useState(false);
 
-  const [portfolio, setPortfolio] = useState<any[]>([]);
-  const [bookings, setBookings] = useState<any[]>([]);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  // DB profile data
+  const [profile, setProfile] = useState(null);
 
+  // FIELDS state
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
   const [bio, setBio] = useState("");
+  const [phone, setPhone] = useState("");
   const [city, setCity] = useState("");
-  const [minPrice, setMinPrice] = useState<number | "">("");
-  const [maxPrice, setMaxPrice] = useState<number | "">("");
-  const [skills, setSkills] = useState<string[]>([]);
+
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+
+  const [skills, setSkills] = useState([]);
   const [newSkill, setNewSkill] = useState("");
 
-  const cities = ["Delhi", "Mumbai", "Bangalore", "Ludhiana"];
+  const [avatarUrl, setAvatarUrl] = useState(null);
+
+  // portfolio
+  const [portfolio, setPortfolio] = useState([]);
+
+  // bookings
+  const [bookings, setBookings] = useState([]);
 
   // KYC
-  const [kyc, setKyc] = useState<any>(null);
+  const [kyc, setKyc] = useState(null);
   const [kycModalOpen, setKycModalOpen] = useState(false);
 
-  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const avatarInputRef = useRef(null);
 
-  // --------------------------------------------------------
-  // LOAD CREATOR DATA
-  // --------------------------------------------------------
+  /* =======================================================
+      LOAD PROFILE DATA
+  ======================================================= */
   useEffect(() => {
-    (async () => {
-      const token = getToken();
-      if (!token) {
-        setAuthMissing(true);
-        setLoading(false);
-        return;
-      }
+    const token = getToken();
+    if (!token) {
+      setAuthMissing(true);
+      return;
+    }
 
+    (async () => {
       try {
         setLoading(true);
 
-        // FIXED API ROUTES ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
-
+        // Get Creator profile
         const me = await api("/creator/me");
 
-        setName(me.name || "");
-        setPhone(me.phone || "");
-        setBio(me.creatorProfile?.bio || "");
-        setCity(me.creatorProfile?.cityId || "");
-        setMinPrice(me.creatorProfile?.minPrice ?? "");
-        setMaxPrice(me.creatorProfile?.maxPrice ?? "");
-        setSkills(me.creatorProfile?.tags || []);
-
-        if (me.creatorProfile?.avatar) {
-          setAvatarUrl(`${API}/uploads/${me.creatorProfile.avatar}`);
+        if (me.exists === false) {
+          toast.error("Create profile first!");
         }
 
-        // Portfolio
+        setProfile(me);
+
+        setName(me.fullName || "");
+        setBio(me.bio || "");
+        setPhone(me.phone || "");
+        setCity(me.city || "");
+        setSkills(me.skills || []);
+        setMinPrice(me.minPrice || "");
+        setMaxPrice(me.maxPrice || "");
+
+        if (me.avatar) {
+          setAvatarUrl(`${API}/uploads/${me.avatar}`);
+        }
+
+        // portfolio
         const pf = await api("/creator/portfolio");
         setPortfolio(pf);
 
-        // BOOKINGS – correct route from backend
+        // bookings
         const bk = await api("/bookings/my");
         setBookings(bk);
 
-        // KYC
+        // kyc
         const kycRes = await api("/creator/kyc");
         setKyc(kycRes);
-
-      } catch (err: any) {
+      } catch (err) {
         toast.error(err.message);
       } finally {
         setLoading(false);
@@ -142,34 +158,34 @@ export function CreatorProfile() {
     })();
   }, []);
 
-  // --------------------------------------------------------
-  // SAVE PROFILE
-  // --------------------------------------------------------
+  /* =======================================================
+      SAVE PROFILE
+  ======================================================= */
   const saveProfile = async () => {
     try {
-      await api("/creator/me", {
+      await api("/creator/update", {
         method: "PATCH",
         body: JSON.stringify({
-          name,
+          fullName: name,
           phone,
           bio,
-          cityId: city,
-          minPrice: minPrice === "" ? 0 : minPrice,
-          maxPrice: maxPrice === "" ? 0 : maxPrice,
-          tags: skills,
+          city,
+          minPrice: minPrice ? Number(minPrice) : 0,
+          maxPrice: maxPrice ? Number(maxPrice) : 0,
+          skills,
         }),
       });
 
-      toast.success("Profile updated");
-    } catch (err: any) {
+      toast.success("Profile updated!");
+    } catch (err) {
       toast.error(err.message);
     }
   };
 
-  // --------------------------------------------------------
-  // AVATAR UPLOAD
-  // --------------------------------------------------------
-  const onAvatarFileChange = async (e: any) => {
+  /* =======================================================
+      AVATAR UPLOAD
+  ======================================================= */
+  const onAvatarFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -183,16 +199,16 @@ export function CreatorProfile() {
       });
 
       setAvatarUrl(`${API}/uploads/${res.url}`);
-      toast.success("Avatar updated");
-    } catch (err: any) {
+      toast.success("Avatar updated!");
+    } catch (err) {
       toast.error(err.message);
     }
   };
 
-  // --------------------------------------------------------
-  // PORTFOLIO UPLOAD
-  // --------------------------------------------------------
-  const onPortfolioUpload = async (e: any) => {
+  /* =======================================================
+      PORTFOLIO UPLOAD
+  ======================================================= */
+  const onPortfolioUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -209,24 +225,23 @@ export function CreatorProfile() {
         ...p,
         { id: Date.now(), url: res.images[0], title: file.name },
       ]);
-    } catch (err: any) {
+    } catch (err) {
       toast.error(err.message);
     }
   };
 
-  const deletePortfolioItem = async (id: string) => {
+  const deletePortfolioItem = async (id) => {
     try {
       await api(`/creator/portfolio/${id}`, { method: "DELETE" });
       setPortfolio((p) => p.filter((i) => i.id !== id));
-      toast.success("Deleted");
-    } catch (err: any) {
+    } catch (err) {
       toast.error(err.message);
     }
   };
 
-  // --------------------------------------------------------
-  // SUBMIT KYC
-  // --------------------------------------------------------
+  /* =======================================================
+      SUBMIT KYC
+  ======================================================= */
   const [aadhaar, setAadhaar] = useState("");
   const [pan, setPan] = useState("");
   const [bankName, setBankName] = useState("");
@@ -234,16 +249,17 @@ export function CreatorProfile() {
   const [ifsc, setIfsc] = useState("");
 
   const submitKyc = async () => {
+    const form = new FormData();
+    form.append("aadhaar", aadhaar);
+    form.append("pan", pan);
+    form.append("bankName", bankName);
+    form.append("accountNumber", accountNumber);
+    form.append("ifsc", ifsc);
+
     try {
       await api("/creator/kyc/submit", {
         method: "POST",
-        body: JSON.stringify({
-          aadhaar,
-          pan,
-          bankName,
-          accountNumber,
-          ifsc,
-        }),
+        body: form,
       });
 
       toast.success("KYC submitted");
@@ -251,16 +267,14 @@ export function CreatorProfile() {
 
       const refreshed = await api("/creator/kyc");
       setKyc(refreshed);
-
-    } catch (err: any) {
+    } catch (err) {
       toast.error(err.message);
     }
   };
 
-  if (authMissing) {
-    return <div className="p-6 text-center">Login required</div>;
-  }
-
+  /* =======================================================
+      PROFILE COMPLETION
+  ======================================================= */
   const profileComplete = useMemo(() => {
     let done = 0;
     if (name) done++;
@@ -273,13 +287,16 @@ export function CreatorProfile() {
     return Math.round((done / 7) * 100);
   }, [name, phone, bio, city, minPrice, maxPrice, skills]);
 
-  // --------------------------------------------------------
-  // UI RENDER
-  // --------------------------------------------------------
-  return (
-    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+  /* =======================================================
+      RENDER UI
+  ======================================================= */
+  if (authMissing)
+    return <div className="p-6 text-center">Login required</div>;
 
-      {/* ---------------- TOP CARD ---------------- */}
+  return (
+    <div className="max-w-7xl mx-auto p-6 space-y-6">
+
+      {/* TOP CARD */}
       <Card className="p-6">
         <div className="flex gap-6">
           <div className="relative">
@@ -295,7 +312,7 @@ export function CreatorProfile() {
 
             <Button
               size="sm"
-              className="absolute bottom-0 right-0 rounded-full w-10 h-10"
+              className="absolute bottom-0 right-0 rounded-full"
               onClick={() => avatarInputRef.current?.click()}
             >
               <Camera size={16} />
@@ -328,36 +345,34 @@ export function CreatorProfile() {
         </div>
       </Card>
 
-      {/* ---------------- STATS ---------------- */}
+      {/* STATS */}
       <div className="grid grid-cols-3 gap-4">
         <Card className="p-4 text-center">
-          <div className="text-primary mb-1">{bookings.length}</div>
+          <div>{bookings.length}</div>
           <p>Events Booked</p>
         </Card>
         <Card className="p-4 text-center">
-          <div className="text-secondary mb-1">4.8</div>
+          <div>4.8</div>
           <p>Avg Rating</p>
         </Card>
         <Card className="p-4 text-center">
-          <div className="text-accent mb-1">{profileComplete}%</div>
+          <div>{profileComplete}%</div>
           <p>Profile Complete</p>
         </Card>
       </div>
 
-      {/* ---------------- TABS ---------------- */}
+      {/* ============ TABS ============ */}
       <Tabs defaultValue="profile">
         <TabsList className="grid grid-cols-3 w-full">
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
-          <TabsTrigger value="bookings">My Bookings</TabsTrigger>
+          <TabsTrigger value="bookings">Bookings</TabsTrigger>
         </TabsList>
 
-        {/* PROFILE TAB */}
+        {/* =========== PROFILE TAB =========== */}
         <TabsContent value="profile" className="mt-6 space-y-6">
-
-          {/* EDIT PROFILE */}
           <Card className="p-6">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between">
               <h3>Edit Profile</h3>
               <Button onClick={saveProfile}>Save Changes</Button>
             </div>
@@ -400,7 +415,7 @@ export function CreatorProfile() {
                 <Button
                   onClick={() => {
                     if (newSkill.trim()) {
-                      setSkills((arr) => [...arr, newSkill.trim()]);
+                      setSkills([...skills, newSkill.trim()]);
                       setNewSkill("");
                     }
                   }}
@@ -410,20 +425,10 @@ export function CreatorProfile() {
               </div>
             </div>
 
-            {/* City & Price */}
             <div className="grid grid-cols-3 gap-6 mt-6">
               <div>
                 <Label>City</Label>
-                <Input
-                  list="city-list"
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                />
-                <datalist id="city-list">
-                  {cities.map((c) => (
-                    <option key={c} value={c} />
-                  ))}
-                </datalist>
+                <Input value={city} onChange={(e) => setCity(e.target.value)} />
               </div>
 
               <div>
@@ -432,7 +437,7 @@ export function CreatorProfile() {
                   type="number"
                   value={minPrice}
                   onChange={(e) =>
-                    setMinPrice(e.target.value === "" ? "" : +e.target.value)
+                    setMinPrice(e.target.value === "" ? "" : e.target.value)
                   }
                 />
               </div>
@@ -443,19 +448,19 @@ export function CreatorProfile() {
                   type="number"
                   value={maxPrice}
                   onChange={(e) =>
-                    setMaxPrice(e.target.value === "" ? "" : +e.target.value)
+                    setMaxPrice(e.target.value === "" ? "" : e.target.value)
                   }
                 />
               </div>
             </div>
           </Card>
 
-          {/* KYC SECTION */}
+          {/* ====== KYC ====== */}
           <Card className="p-6">
             <h3 className="mb-4">KYC Verification</h3>
 
             {!kyc?.status && (
-              <div className="flex justify-between items-center">
+              <div className="flex justify-between">
                 <p>No KYC submitted</p>
                 <Button onClick={() => setKycModalOpen(true)}>Submit KYC</Button>
               </div>
@@ -493,112 +498,110 @@ export function CreatorProfile() {
           </Card>
         </TabsContent>
 
-        {/* PORTFOLIO TAB */}
+        {/* ========== PORTFOLIO TAB ========== */}
         <TabsContent value="portfolio" className="mt-6">
           <Card className="p-6">
             <div className="flex justify-between mb-6">
               <div>
                 <h3>My Portfolio</h3>
-                <p>Showcase your best work</p>
+                <p>Upload your best work</p>
               </div>
 
-            <Button onClick={() => document.getElementById("pfInput")?.click()}>
-              <Upload size={16} /> Upload Image
-            </Button>
+              <Button onClick={() => document.getElementById("pfInput")?.click()}>
+                <Upload size={16} /> Upload
+              </Button>
 
-            <input
-              id="pfInput"
-              type="file"
-              className="hidden"
-              accept="image/*"
-              onChange={onPortfolioUpload}
-            />
-          </div>
+              <input
+                id="pfInput"
+                type="file"
+                className="hidden"
+                accept="image/*"
+                onChange={onPortfolioUpload}
+              />
+            </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {portfolio.map((img) => (
-              <div key={img.id} className="relative group rounded-xl overflow-hidden">
-                <img
-                  src={`${API}/uploads/${img.url}`}
-                  className="object-cover w-full h-full"
-                />
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {portfolio.map((img) => (
+                <div key={img.id} className="relative group rounded-xl overflow-hidden">
+                  <img
+                    src={`${API}/uploads/${img.url}`}
+                    className="object-cover w-full h-full"
+                  />
 
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 
                     flex items-center justify-center transition">
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => deletePortfolioItem(img.id)}
-                  >
-                    <Trash size={14} />
-                  </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => deletePortfolioItem(img.id)}
+                    >
+                      <Trash size={14} />
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              ))}
+            </div>
+          </Card>
+        </TabsContent>
+
+        {/* ========= BOOKINGS TAB ========= */}
+        <TabsContent value="bookings" className="mt-6">
+          <Card className="p-6 space-y-4">
+            <h3>Your Events</h3>
+
+            {bookings.map((bk) => (
+              <Card key={bk.id} className="p-4 flex justify-between">
+                <div>
+                  <h4>{bk.event?.title}</h4>
+                  <p className="text-sm">{bk.event?.startAt}</p>
+                </div>
+                <Badge>{bk.status}</Badge>
+              </Card>
             ))}
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* KYC MODAL */}
+      <Dialog open={kycModalOpen} onOpenChange={setKycModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Submit KYC</DialogTitle>
+            <DialogDescription>Enter your document details</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-4">
+            <div>
+              <Label>Aadhaar</Label>
+              <Input value={aadhaar} onChange={(e) => setAadhaar(e.target.value)} />
+            </div>
+
+            <div>
+              <Label>PAN</Label>
+              <Input value={pan} onChange={(e) => setPan(e.target.value)} />
+            </div>
+
+            <div>
+              <Label>Bank Name</Label>
+              <Input value={bankName} onChange={(e) => setBankName(e.target.value)} />
+            </div>
+
+            <div>
+              <Label>Account Number</Label>
+              <Input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} />
+            </div>
+
+            <div>
+              <Label>IFSC</Label>
+              <Input value={ifsc} onChange={(e) => setIfsc(e.target.value)} />
+            </div>
+
+            <Button className="w-full" onClick={submitKyc}>
+              Submit KYC
+            </Button>
           </div>
-        </Card>
-      </TabsContent>
-
-      {/* BOOKINGS TAB */}
-      <TabsContent value="bookings" className="mt-6">
-        <Card className="p-6 space-y-4">
-          <h3>Your Events</h3>
-
-          {bookings.map((bk) => (
-            <Card key={bk.id} className="p-4 flex justify-between">
-              <div>
-                <h4>{bk.eventTitle}</h4>
-                <p className="text-sm text-neutral-600">{bk.eventDate}</p>
-              </div>
-              <Badge>{bk.status}</Badge>
-            </Card>
-          ))}
-        </Card>
-      </TabsContent>
-    </Tabs>
-
-    {/* KYC MODAL */}
-    <Dialog open={kycModalOpen} onOpenChange={setKycModalOpen}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Submit KYC</DialogTitle>
-          <DialogDescription>Enter your document details</DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4 mt-4">
-
-          <div>
-            <Label>Aadhaar</Label>
-            <Input value={aadhaar} onChange={(e) => setAadhaar(e.target.value)} />
-          </div>
-
-          <div>
-            <Label>PAN</Label>
-            <Input value={pan} onChange={(e) => setPan(e.target.value)} />
-          </div>
-
-          <div>
-            <Label>Bank Name</Label>
-            <Input value={bankName} onChange={(e) => setBankName(e.target.value)} />
-          </div>
-
-          <div>
-            <Label>Account Number</Label>
-            <Input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} />
-          </div>
-
-          <div>
-            <Label>IFSC</Label>
-            <Input value={ifsc} onChange={(e) => setIfsc(e.target.value)} />
-          </div>
-
-          <Button className="w-full" onClick={submitKyc}>
-            Submit KYC
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-
-  </div>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
