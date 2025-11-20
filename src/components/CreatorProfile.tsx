@@ -1,6 +1,6 @@
 /** 
  * 100% FIXED + BACKEND COMPATIBLE
- * CREATOR PROFILE PAGE
+ * CREATOR PROFILE PAGE (FINAL VERSION)
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -75,10 +75,9 @@ export function CreatorProfile() {
   const [loading, setLoading] = useState(true);
   const [authMissing, setAuthMissing] = useState(false);
 
-  // DB profile data
   const [profile, setProfile] = useState(null);
 
-  // FIELDS state
+  // fields
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
   const [phone, setPhone] = useState("");
@@ -91,14 +90,9 @@ export function CreatorProfile() {
   const [newSkill, setNewSkill] = useState("");
 
   const [avatarUrl, setAvatarUrl] = useState(null);
-
-  // portfolio
   const [portfolio, setPortfolio] = useState([]);
-
-  // bookings
   const [bookings, setBookings] = useState([]);
 
-  // KYC
   const [kyc, setKyc] = useState(null);
   const [kycModalOpen, setKycModalOpen] = useState(false);
 
@@ -118,38 +112,31 @@ export function CreatorProfile() {
       try {
         setLoading(true);
 
-        // Get Creator profile
         const me = await api("/creator/me");
-
-        if (me.exists === false) {
-          toast.error("Create profile first!");
-        }
 
         setProfile(me);
 
         setName(me.fullName || "");
         setBio(me.bio || "");
         setPhone(me.phone || "");
-        setCity(me.city || "");
-        setSkills(me.skills || []);
-        setMinPrice(me.minPrice || "");
-        setMaxPrice(me.maxPrice || "");
+        setCity(me.cityId || "");
+        setSkills(me.tags || []);
+        setMinPrice(me.minPrice ?? "");
+        setMaxPrice(me.maxPrice ?? "");
 
         if (me.avatar) {
           setAvatarUrl(`${API}/uploads/${me.avatar}`);
         }
 
-        // portfolio
         const pf = await api("/creator/portfolio");
         setPortfolio(pf);
 
-        // bookings
         const bk = await api("/bookings/my");
         setBookings(bk);
 
-        // kyc
-        const kycRes = await api("/creator/kyc");
-        setKyc(kycRes);
+        const k = await api("/creator/kyc");
+        setKyc(k);
+
       } catch (err) {
         toast.error(err.message);
       } finally {
@@ -159,20 +146,20 @@ export function CreatorProfile() {
   }, []);
 
   /* =======================================================
-      SAVE PROFILE
+      SAVE PROFILE (FIXED)
   ======================================================= */
   const saveProfile = async () => {
     try {
-      await api("/creator/update", {
+      await api("/creator/me", {
         method: "PATCH",
         body: JSON.stringify({
           fullName: name,
           phone,
           bio,
-          city,
-          minPrice: minPrice ? Number(minPrice) : 0,
-          maxPrice: maxPrice ? Number(maxPrice) : 0,
-          skills,
+          cityId: city,
+          minPrice: Number(minPrice || 0),
+          maxPrice: Number(maxPrice || 0),
+          tags: skills,
         }),
       });
 
@@ -240,7 +227,7 @@ export function CreatorProfile() {
   };
 
   /* =======================================================
-      SUBMIT KYC
+      SUBMIT KYC  (FIXED: JSON format)
   ======================================================= */
   const [aadhaar, setAadhaar] = useState("");
   const [pan, setPan] = useState("");
@@ -249,24 +236,24 @@ export function CreatorProfile() {
   const [ifsc, setIfsc] = useState("");
 
   const submitKyc = async () => {
-    const form = new FormData();
-    form.append("aadhaar", aadhaar);
-    form.append("pan", pan);
-    form.append("bankName", bankName);
-    form.append("accountNumber", accountNumber);
-    form.append("ifsc", ifsc);
-
     try {
       await api("/creator/kyc/submit", {
         method: "POST",
-        body: form,
+        body: JSON.stringify({
+          aadhaar,
+          pan,
+          bankName,
+          accountNumber,
+          ifsc,
+        }),
       });
 
-      toast.success("KYC submitted");
+      toast.success("KYC submitted!");
       setKycModalOpen(false);
 
       const refreshed = await api("/creator/kyc");
       setKyc(refreshed);
+
     } catch (err) {
       toast.error(err.message);
     }
@@ -287,9 +274,11 @@ export function CreatorProfile() {
     return Math.round((done / 7) * 100);
   }, [name, phone, bio, city, minPrice, maxPrice, skills]);
 
+
   /* =======================================================
-      RENDER UI
+      RENDER
   ======================================================= */
+
   if (authMissing)
     return <div className="p-6 text-center">Login required</div>;
 
@@ -351,25 +340,27 @@ export function CreatorProfile() {
           <div>{bookings.length}</div>
           <p>Events Booked</p>
         </Card>
+
         <Card className="p-4 text-center">
           <div>4.8</div>
           <p>Avg Rating</p>
         </Card>
+
         <Card className="p-4 text-center">
           <div>{profileComplete}%</div>
           <p>Profile Complete</p>
         </Card>
       </div>
 
-      {/* ============ TABS ============ */}
+      {/* TABS */}
       <Tabs defaultValue="profile">
-        <TabsList className="grid grid-cols-3 w-full">
+        <TabsList className="grid grid-cols-3">
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
           <TabsTrigger value="bookings">Bookings</TabsTrigger>
         </TabsList>
 
-        {/* =========== PROFILE TAB =========== */}
+        {/* PROFILE TAB */}
         <TabsContent value="profile" className="mt-6 space-y-6">
           <Card className="p-6">
             <div className="flex justify-between">
@@ -399,9 +390,18 @@ export function CreatorProfile() {
               <Label>Skills</Label>
               <div className="flex gap-2 flex-wrap mt-2">
                 {skills.map((s) => (
-                  <Badge key={s} variant="outline" className="flex gap-1">
+                  <Badge
+                    key={s}
+                    variant="outline"
+                    className="flex gap-1 items-center"
+                  >
                     {s}
-                    <X size={12} onClick={() => setSkills(skills.filter(x => x !== s))} />
+                    <X
+                      size={12}
+                      onClick={() =>
+                        setSkills(skills.filter((x) => x !== s))
+                      }
+                    />
                   </Badge>
                 ))}
               </div>
@@ -455,7 +455,7 @@ export function CreatorProfile() {
             </div>
           </Card>
 
-          {/* ====== KYC ====== */}
+          {/* KYC */}
           <Card className="p-6">
             <h3 className="mb-4">KYC Verification</h3>
 
@@ -481,7 +481,7 @@ export function CreatorProfile() {
                 <CheckCircle className="text-green-700" />
                 <div>
                   <h4 className="font-semibold">Verified</h4>
-                  <p>Documents approved by admin</p>
+                  <p>Documents approved</p>
                 </div>
               </div>
             )}
@@ -498,7 +498,7 @@ export function CreatorProfile() {
           </Card>
         </TabsContent>
 
-        {/* ========== PORTFOLIO TAB ========== */}
+        {/* PORTFOLIO TAB */}
         <TabsContent value="portfolio" className="mt-6">
           <Card className="p-6">
             <div className="flex justify-between mb-6">
@@ -522,14 +522,21 @@ export function CreatorProfile() {
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {portfolio.map((img) => (
-                <div key={img.id} className="relative group rounded-xl overflow-hidden">
+                <div
+                  key={img.id}
+                  className="relative group rounded-xl overflow-hidden"
+                >
                   <img
                     src={`${API}/uploads/${img.url}`}
                     className="object-cover w-full h-full"
                   />
 
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 
-                    flex items-center justify-center transition">
+                  <div
+                    className="
+                      absolute inset-0 bg-black/40 opacity-0 
+                      group-hover:opacity-100 transition flex items-center justify-center
+                    "
+                  >
                     <Button
                       size="sm"
                       variant="destructive"
@@ -544,7 +551,7 @@ export function CreatorProfile() {
           </Card>
         </TabsContent>
 
-        {/* ========= BOOKINGS TAB ========= */}
+        {/* BOOKINGS TAB */}
         <TabsContent value="bookings" className="mt-6">
           <Card className="p-6 space-y-4">
             <h3>Your Events</h3>
@@ -553,7 +560,7 @@ export function CreatorProfile() {
               <Card key={bk.id} className="p-4 flex justify-between">
                 <div>
                   <h4>{bk.event?.title}</h4>
-                  <p className="text-sm">{bk.event?.startAt}</p>
+                  <p className="text-sm">{bk.event?.date}</p>
                 </div>
                 <Badge>{bk.status}</Badge>
               </Card>
@@ -567,7 +574,7 @@ export function CreatorProfile() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Submit KYC</DialogTitle>
-            <DialogDescription>Enter your document details</DialogDescription>
+            <DialogDescription>Enter your KYC details</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 mt-4">
