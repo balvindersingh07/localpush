@@ -19,29 +19,34 @@ interface AuthProps {
   onLogin: (email: string, role: "creator" | "organizer" | "admin") => void;
 }
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API =
+  import.meta.env.VITE_API_URL || "https://localpush.onrender.com";
 
+// ---- FIXED JSON FETCH WITH BETTER ERROR ----
 async function jsonFetch<T = any>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
   });
 
-  let data: any = null;
+  let data: any = {};
   try {
     data = await res.json();
   } catch {}
 
-  if (!res.ok) throw new Error(data?.detail || data?.message || res.statusText);
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Request failed");
+  }
   return data as T;
 }
 
+// ---- SAVE AUTH FIXED ----
 function saveAuth(token: string, user: any) {
-  localStorage.setItem("jwt", token);
   localStorage.setItem("sharthi_token", token);
   localStorage.setItem("sharthi_user", JSON.stringify(user));
 }
 
+// ---- FIX ROLE FORMAT ----
 function toUiRole(raw: any): "creator" | "organizer" | "admin" {
   const r = String(raw || "CREATOR").toUpperCase();
   if (r === "ORGANIZER") return "organizer";
@@ -52,9 +57,11 @@ function toUiRole(raw: any): "creator" | "organizer" | "admin" {
 export function Auth({ open, onOpenChange, onLogin }: AuthProps) {
   const [tab, setTab] = useState<"signin" | "signup">("signin");
 
+  // Sign In States
   const [signinEmail, setSigninEmail] = useState("");
   const [signinPassword, setSigninPassword] = useState("");
 
+  // Sign Up States
   const [name, setName] = useState("");
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
@@ -72,7 +79,7 @@ export function Auth({ open, onOpenChange, onLogin }: AuthProps) {
     setTab("signin");
   }
 
-  /* ---------- LOGIN ---------- */
+  /* ====================== LOGIN ====================== */
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     if (!signinEmail || !signinPassword) {
@@ -82,13 +89,16 @@ export function Auth({ open, onOpenChange, onLogin }: AuthProps) {
 
     setLoading(true);
     try {
-      const data = await jsonFetch<{ access_token: string }>(`${API}/auth/login`, {
-        method: "POST",
-        body: JSON.stringify({
-          email: signinEmail,
-          password: signinPassword,
-        }),
-      });
+      const data = await jsonFetch<{ access_token: string }>(
+        `${API}/auth/login`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            email: signinEmail,
+            password: signinPassword,
+          }),
+        }
+      );
 
       const me = await jsonFetch<any>(`${API}/auth/me`, {
         headers: { Authorization: `Bearer ${data.access_token}` },
@@ -109,7 +119,7 @@ export function Auth({ open, onOpenChange, onLogin }: AuthProps) {
     }
   }
 
-  /* ---------- SIGNUP ---------- */
+  /* ====================== SIGNUP ====================== */
   async function handleSignUp(e: React.FormEvent) {
     e.preventDefault();
     if (!name || !signupEmail || !signupPassword) {
@@ -126,7 +136,7 @@ export function Auth({ open, onOpenChange, onLogin }: AuthProps) {
         method: "POST",
         body: JSON.stringify({
           name,
-          email: signupEmail,
+          email: signupEmail.toLowerCase().trim(),
           password: signupPassword,
           role: apiRole,
         }),
@@ -152,7 +162,9 @@ export function Auth({ open, onOpenChange, onLogin }: AuthProps) {
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Welcome to LocalPush</DialogTitle>
-          <DialogDescription>Sign in or create a new account</DialogDescription>
+          <DialogDescription>
+            Sign in or create a new account
+          </DialogDescription>
         </DialogHeader>
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
@@ -193,7 +205,10 @@ export function Auth({ open, onOpenChange, onLogin }: AuthProps) {
             <form onSubmit={handleSignUp} className="space-y-4">
               <div>
                 <Label>Full Name</Label>
-                <Input value={name} onChange={(e) => setName(e.target.value)} />
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
               </div>
 
               <div>
@@ -216,7 +231,10 @@ export function Auth({ open, onOpenChange, onLogin }: AuthProps) {
 
               <div>
                 <Label>I am a</Label>
-                <RadioGroup value={role} onValueChange={(v) => setRole(v as any)}>
+                <RadioGroup
+                  value={role}
+                  onValueChange={(v) => setRole(v as any)}
+                >
                   <div className="flex items-center space-x-2">
                     <RadioGroupItem value="creator" id="creator" />
                     <Label htmlFor="creator">Creator</Label>
