@@ -1,7 +1,6 @@
+from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-import os
 
 from app.auth.routes import auth_router
 from app.events.routes import event_router
@@ -15,9 +14,11 @@ from app.creator.admin_kyc import admin_kyc_router
 
 app = FastAPI(
     title="Sharthi API",
-    version="1.0"
+    version="1.0",
+    description="Backend service for Sharthi platform"
 )
 
+# CORS
 origins = [
     "https://localpush.vercel.app",
     "http://localhost:3000",
@@ -32,10 +33,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# STATIC /uploads for avatar + portfolio
-if not os.path.exists("uploads"):
-  os.makedirs("uploads")
-
+# -----------------------------
+# 🔥 SERVE UPLOADED IMAGES
+# -----------------------------
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # ROUTERS
@@ -49,11 +49,9 @@ app.include_router(admin_router, prefix="/admin")
 app.include_router(admin_kyc_router, prefix="/admin/kyc")
 app.include_router(chatbot_router, prefix="/chatbot")
 
-
 @app.get("/")
 def root():
     return {"message": "Sharthi API running"}
-
 
 if __name__ == "__main__":
     import uvicorn
