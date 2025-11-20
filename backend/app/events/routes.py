@@ -1,0 +1,136 @@
+from fastapi import APIRouter, Depends, HTTPException
+from bson import ObjectId
+from datetime import datetime
+
+from app.database import db
+from app.auth.routes import oauth2_scheme
+from app.config import settings
+from jose import jwt
+
+event_router = APIRouter(tags=["Events"])
+
+events = db["events"]
+
+
+# ------------------------------------------------
+# JWT → Get userId from token
+# ------------------------------------------------
+def get_user_id(token: str = Depends(oauth2_scheme)):
+    try:
+        decoded = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGO])
+        return decoded.get("id")
+    except:
+        raise HTTPException(401, "Invalid or expired token")
+
+
+# ------------------------------------------------
+# SERIALIZER → Convert Mongo Document
+# ------------------------------------------------
+def serialize_event(e):
+    return {
+        "id": str(e["_id"]),
+        "title": e.get("title", ""),
+        "cityId": e.get("cityId", ""),
+
+        "startAt": e.get("startAt").isoformat() if e.get("startAt") else None,
+        "endAt": e.get("endAt").isoformat() if e.get("endAt") else None,
+
+        "tags": e.get("tags", []),
+        "location": e.get("location", ""),
+        "venueName": e.get("venueName", ""),
+        "description": e.get("description", ""),
+
+        "views": e.get("views", 0),
+        "status": e.get("status", "active"),
+        "createdAt": e.get("createdAt").isoformat() if e.get("createdAt") else None,
+    }
+
+
+# ------------------------------------------------
+# GET ALL EVENTS
+# ------------------------------------------------
+@event_router.get("")
+def get_events(city: str | None = None, tags: str | None = None):
+
+    query = {}
+
+    if city:
+        query["cityId"] = {"$regex": city, "$options": "i"}
+
+    if tags:
+        tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
+        query["tags"] = {"$in": tag_list}
+
+    fetched = list(events.find(query).sort("createdAt", -1))
+
+    return [serialize_event(e) for e in fetched]
+
+
+# ------------------------------------------------
+# GET SINGLE EVENT BY ID   (FIXED FOR FRONTEND)
+# ------------------------------------------------
+@event_router.get("/{eventId}")
+def get_event(eventId: str):
+
+    if not ObjectId.is_valid(eventId):
+        raise HTTPException(400, "Invalid eventId")
+
+    e = events.find_one({"_id": ObjectId(eventId)})
+    if not e:
+        raise HTTPException(404, "Event not found")
+
+    return serialize_event(e)
+
+
+# ------------------------------------------------
+# CREATE EVENT (POST /events)
+# ------------------------------------------------
+@event_router.post("")
+def create_event(payload: dict, userId: str = Depends(get_user_id)):
+
+    # --- Utility for safe date parsing ---
+    def safe_date(value):
+        try:
+            return datetime.fromisoformat(value) if value else datetime.now()
+        except:
+            return datetime.now()
+
+    title = payload.get("title") or "Untitled Event"
+    cityId = payload.get("cityId") or ""
+
+    start_date = safe_date(payload.get("startAt"))
+    end_date = safe_date(payload.get("endAt"))
+
+    # Tags must always be Array
+    tags = payload.get("tags", [])
+    if isinstance(tags, str):
+        tags = [t.strip().lower() for t in tags.split(",") if t.strip()]
+
+    event_data = {
+        "organizerId": userId,
+
+        "title": title,
+        "cityId": cityId,
+
+        "startAt": start_date,
+        "endAt": end_date,
+
+        "tags": tags,
+        "venueName": payload.get("venueName", ""),
+        "location": payload.get("location", ""),
+
+        "description": payload.get("description", ""),
+        "coverImage": payload.get("coverImage", ""),
+        "bannerImage": payload.get("bannerImage", ""),
+
+        "views": 0,
+        "status": "active",
+        "createdAt": datetime.now()
+    }
+
+    result = events.insert_one(event_data)
+
+    return {
+        "message": "Event created successfully",
+        "id": str(result.inserted_id)
+    }
