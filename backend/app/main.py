@@ -12,7 +12,6 @@ from app.stalls.routes import stall_router
 from app.creator.routes import creator_router
 from app.creator.admin_kyc import admin_kyc_router
 
-
 # -------------------------------------------------
 # 🚀 APP CONFIG
 # -------------------------------------------------
@@ -23,14 +22,21 @@ app = FastAPI(
 )
 
 # -------------------------------------------------
-# 🔥 CORS CONFIG (Render compatible)
+# 🔥 CORS CONFIG (CORRECT FOR RENDER + VERCEL)
 # -------------------------------------------------
+
+origins = [
+    "https://localpush.vercel.app",  # your frontend
+    "http://localhost:3000",         # local testing
+    "https://localpush.onrender.com" # backend self-call safety
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],     # '*' allowed only if allow_credentials=False
+    allow_origins=origins,       # specific origins for production
+    allow_credentials=True,      # needed for JWT / cookies
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=False  # IMPORTANT for Render deployment
 )
 
 # -------------------------------------------------
@@ -44,7 +50,7 @@ app.include_router(auth_router, prefix="/auth")
 app.include_router(event_router, prefix="/events")
 
 # STALLS (events/:id/stalls)
-app.include_router(stall_router, prefix="/events")  # okay
+app.include_router(stall_router, prefix="/events")
 
 # BOOKINGS
 app.include_router(booking_router, prefix="/bookings")
@@ -74,7 +80,7 @@ def root():
 
 
 # -------------------------------------------------
-# 🚀 MAIN ENTRY POINT (NEEDED FOR RENDER)
+# 🚀 MAIN ENTRY POINT (REQUIRED BY RENDER)
 # -------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
