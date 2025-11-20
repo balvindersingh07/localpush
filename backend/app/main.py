@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 
 from app.auth.routes import auth_router
 from app.events.routes import event_router
@@ -30,6 +32,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# STATIC /uploads for avatar + portfolio
+if not os.path.exists("uploads"):
+  os.makedirs("uploads")
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# ROUTERS
 app.include_router(auth_router, prefix="/auth")
 app.include_router(event_router, prefix="/events")
 app.include_router(stall_router, prefix="/events")

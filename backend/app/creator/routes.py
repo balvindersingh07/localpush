@@ -4,7 +4,8 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from jose import jwt
 from bson import ObjectId
 from typing import List
-import uuid, os
+import uuid
+import os
 
 from app.config import settings
 from app.auth.routes import oauth2_scheme
@@ -34,8 +35,8 @@ def get_user_id(token: str = Depends(oauth2_scheme)):
             token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGO]
         )
         return decoded.get("id")
-    except:
-        raise HTTPException(401, "Invalid or expired token")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 # ---------------------------------------------------------
@@ -47,9 +48,9 @@ def get_creator_me(userId: str = Depends(get_user_id)):
     if not user:
         raise HTTPException(404, "User not found")
 
-    # Fetch or auto-create creator profile
     profile = creators_collection.find_one({"userId": userId})
 
+    # auto-create empty profile if missing
     if not profile:
         profile = {
             "userId": userId,
@@ -97,16 +98,17 @@ def update_profile(data: CreatorProfileUpdate, userId: str = Depends(get_user_id
 
     update_fields = {k: v for k, v in data.dict().items() if v is not None}
 
-    creators_collection.update_one(
-        {"userId": userId},
-        {"$set": update_fields},
-    )
+    if update_fields:
+        creators_collection.update_one(
+            {"userId": userId},
+            {"$set": update_fields},
+        )
 
-    # Sync fullName with users collection
+    # Sync name into users collection
     if data.fullName:
         users_collection.update_one(
             {"_id": ObjectId(userId)},
-            {"$set": {"name": data.fullName}}
+            {"$set": {"name": data.fullName}},
         )
 
     return {"message": "Profile updated"}
@@ -116,16 +118,20 @@ def update_profile(data: CreatorProfileUpdate, userId: str = Depends(get_user_id
 # POST /creator/avatar
 # ---------------------------------------------------------
 @creator_router.post("/avatar", response_model=AvatarUploadResponse)
-async def upload_avatar(file: UploadFile = File(...), userId: str = Depends(get_user_id)):
+async def upload_avatar(
+    file: UploadFile = File(...),
+    userId: str = Depends(get_user_id),
+):
 
     os.makedirs("uploads", exist_ok=True)
 
-    ext = os.path.splitext(file.filename)[1] or ".jpg"
+    ext = os.path.splitext(file.filename or "")[1] or ".jpg"
     fname = f"avatar_{userId}_{uuid.uuid4()}{ext}"
+    path = os.path.join("uploads", fname)
 
-    path = f"uploads/{fname}"
+    contents = await file.read()
     with open(path, "wb") as f:
-        f.write(await file.read())
+        f.write(contents)
 
     creators_collection.update_one(
         {"userId": userId},
@@ -136,41 +142,56 @@ async def upload_avatar(file: UploadFile = File(...), userId: str = Depends(get_
 
 
 # ---------------------------------------------------------
-# PORTFOLIO UPLOAD
+# PORTFOLIO UPLOAD/LIST/DELETE
 # ---------------------------------------------------------
 @creator_router.post("/portfolio")
-async def upload_portfolio(files: List[UploadFile] = File(...), userId: str = Depends(get_user_id)):
-
+async def upload_portfolio(
+    files: List[UploadFile] = File(...),
+    userId: str = Depends(get_user_id),
+):
     os.makedirs("uploads", exist_ok=True)
-    uploaded = []
+
+    uploaded_urls: List[str] = []
+    uploaded_ids: List[str] = []
 
     for f in files:
-        ext = os.path.splitext(f.filename)[1] or ".jpg"
+        ext = os.path.splitext(f.filename or "")[1] or ".jpg"
         fname = f"portfolio_{userId}_{uuid.uuid4()}{ext}"
+        path = os.path.join("uploads", fname)
 
-        path = f"uploads/{fname}"
+        data = await f.read()
         with open(path, "wb") as out:
-            out.write(await f.read())
+            out.write(data)
 
-        portfolio_collection.insert_one({
-            "userId": userId,
-            "url": fname,
-            "title": f.filename,
-        })
+        res = portfolio_collection.insert_one(
+            {
+                "userId": userId,
+                "url": fname,
+                "title": f.filename,
+            }
+        )
 
-        uploaded.append(fname)
+        uploaded_urls.append(fname)
+        uploaded_ids.append(str(res.inserted_id))
 
-    return {"message": "Uploaded", "images": uploaded}
+    return {
+        "message": "Uploaded",
+        "images": uploaded_urls,
+        "ids": uploaded_ids,
+    }
 
 
 @creator_router.get("/portfolio")
 def list_portfolio(userId: str = Depends(get_user_id)):
     items = portfolio_collection.find({"userId": userId})
-    return [{
-        "id": str(item["_id"]),
-        "url": item["url"],
-        "title": item.get("title", "")
-    } for item in items]
+    return [
+        {
+            "id": str(item["_id"]),
+            "url": item["url"],
+            "title": item.get("title", ""),
+        }
+        for item in items
+    ]
 
 
 @creator_router.delete("/portfolio/{itemId}")
