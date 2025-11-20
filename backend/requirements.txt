@@ -4,7 +4,7 @@ pymongo
 python-dotenv
 dnspython
 python-multipart
-passlib[bcrypt]
+passlib
 python-jose
 requests
 email-validator
