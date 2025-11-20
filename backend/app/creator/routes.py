@@ -4,8 +4,8 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from jose import jwt
 from bson import ObjectId
 from typing import List
-import uuid
-import os
+import cloudinary
+import cloudinary.uploader
 
 from app.config import settings
 from app.auth.routes import oauth2_scheme
@@ -24,6 +24,17 @@ from .schemas import (
 )
 
 creator_router = APIRouter(tags=["Creator"])
+
+
+# ---------------------------------------------------------
+# CLOUDINARY CONFIG
+# ---------------------------------------------------------
+cloudinary.config(
+    cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+    api_key=settings.CLOUDINARY_API_KEY,
+    api_secret=settings.CLOUDINARY_API_SECRET,
+    secure=True
+)
 
 
 # ---------------------------------------------------------
@@ -50,7 +61,6 @@ def get_creator_me(userId: str = Depends(get_user_id)):
 
     profile = creators_collection.find_one({"userId": userId})
 
-    # auto-create empty profile if missing
     if not profile:
         profile = {
             "userId": userId,
@@ -104,7 +114,6 @@ def update_profile(data: CreatorProfileUpdate, userId: str = Depends(get_user_id
             {"$set": update_fields},
         )
 
-    # Sync name into users collection
     if data.fullName:
         users_collection.update_one(
             {"_id": ObjectId(userId)},
@@ -115,7 +124,7 @@ def update_profile(data: CreatorProfileUpdate, userId: str = Depends(get_user_id
 
 
 # ---------------------------------------------------------
-# POST /creator/avatar
+# POST /creator/avatar  (CLOUDINARY VERSION)
 # ---------------------------------------------------------
 @creator_router.post("/avatar", response_model=AvatarUploadResponse)
 async def upload_avatar(
@@ -123,56 +132,60 @@ async def upload_avatar(
     userId: str = Depends(get_user_id),
 ):
 
-    os.makedirs("uploads", exist_ok=True)
+    try:
+        result = cloudinary.uploader.upload(
+            await file.read(),
+            folder=f"localpush/avatars/{userId}",
+            public_id=f"avatar_{userId}",
+            overwrite=True,
+        )
 
-    ext = os.path.splitext(file.filename or "")[1] or ".jpg"
-    fname = f"avatar_{userId}_{uuid.uuid4()}{ext}"
-    path = os.path.join("uploads", fname)
+        img_url = result["secure_url"]
 
-    contents = await file.read()
-    with open(path, "wb") as f:
-        f.write(contents)
+        creators_collection.update_one(
+            {"userId": userId},
+            {"$set": {"avatar": img_url}},
+            upsert=True,
+        )
 
-    creators_collection.update_one(
-        {"userId": userId},
-        {"$set": {"avatar": fname}},
-    )
+        return {"message": "Avatar uploaded", "url": img_url}
 
-    return {"message": "Avatar uploaded", "url": fname}
+    except Exception as e:
+        raise HTTPException(500, f"Cloudinary upload failed: {str(e)}")
 
 
 # ---------------------------------------------------------
-# PORTFOLIO UPLOAD/LIST/DELETE
+# PORTFOLIO UPLOAD (CLOUDINARY VERSION)
 # ---------------------------------------------------------
 @creator_router.post("/portfolio")
 async def upload_portfolio(
     files: List[UploadFile] = File(...),
     userId: str = Depends(get_user_id),
 ):
-    os.makedirs("uploads", exist_ok=True)
 
-    uploaded_urls: List[str] = []
-    uploaded_ids: List[str] = []
+    uploaded_urls = []
+    uploaded_ids = []
 
-    for f in files:
-        ext = os.path.splitext(f.filename or "")[1] or ".jpg"
-        fname = f"portfolio_{userId}_{uuid.uuid4()}{ext}"
-        path = os.path.join("uploads", fname)
+    for file in files:
+        try:
+            result = cloudinary.uploader.upload(
+                await file.read(),
+                folder=f"localpush/portfolio/{userId}"
+            )
 
-        data = await f.read()
-        with open(path, "wb") as out:
-            out.write(data)
+            img_url = result["secure_url"]
 
-        res = portfolio_collection.insert_one(
-            {
+            res = portfolio_collection.insert_one({
                 "userId": userId,
-                "url": fname,
-                "title": f.filename,
-            }
-        )
+                "url": img_url,
+                "title": file.filename,
+            })
 
-        uploaded_urls.append(fname)
-        uploaded_ids.append(str(res.inserted_id))
+            uploaded_urls.append(img_url)
+            uploaded_ids.append(str(res.inserted_id))
+
+        except Exception as e:
+            raise HTTPException(500, f"Failed: {e}")
 
     return {
         "message": "Uploaded",
@@ -181,6 +194,9 @@ async def upload_portfolio(
     }
 
 
+# ---------------------------------------------------------
+# LIST PORTFOLIO
+# ---------------------------------------------------------
 @creator_router.get("/portfolio")
 def list_portfolio(userId: str = Depends(get_user_id)):
     items = portfolio_collection.find({"userId": userId})
@@ -194,10 +210,13 @@ def list_portfolio(userId: str = Depends(get_user_id)):
     ]
 
 
+# ---------------------------------------------------------
+# DELETE PORTFOLIO
+# ---------------------------------------------------------
 @creator_router.delete("/portfolio/{itemId}")
 def delete_portfolio(itemId: str, userId: str = Depends(get_user_id)):
-    item = portfolio_collection.find_one({"_id": ObjectId(itemId)})
 
+    item = portfolio_collection.find_one({"_id": ObjectId(itemId)})
     if not item:
         raise HTTPException(404, "Item not found")
 
@@ -214,15 +233,9 @@ def delete_portfolio(itemId: str, userId: str = Depends(get_user_id)):
 @creator_router.post("/kyc/submit")
 def submit_kyc(payload: CreatorKyc, userId: str = Depends(get_user_id)):
 
-    data = {
-        "userId": userId,
-        "aadhaar": payload.aadhaar,
-        "pan": payload.pan,
-        "bankName": payload.bankName,
-        "accountNumber": payload.accountNumber,
-        "ifsc": payload.ifsc,
-        "status": "pending",
-    }
+    data = payload.dict()
+    data["userId"] = userId
+    data["status"] = "pending"
 
     kyc_collection.update_one(
         {"userId": userId},

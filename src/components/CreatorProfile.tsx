@@ -1,5 +1,5 @@
 /** 
- * CREATOR PROFILE PAGE – FINAL, BACKEND COMPATIBLE
+ * CREATOR PROFILE PAGE – FINAL, CLOUDINARY READY
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -44,7 +44,7 @@ function getToken() {
 }
 
 /* API WRAPPER */
-async function api(path: string, init: RequestInit = {}) {
+async function api(path, init = {}) {
   const headers = new Headers(init.headers);
   const token = getToken();
 
@@ -74,7 +74,7 @@ export function CreatorProfile() {
   const [loading, setLoading] = useState(true);
   const [authMissing, setAuthMissing] = useState(false);
 
-  const [profile, setProfile] = useState<any | null>(null);
+  const [profile, setProfile] = useState(null);
 
   // fields
   const [name, setName] = useState("");
@@ -82,20 +82,20 @@ export function CreatorProfile() {
   const [phone, setPhone] = useState("");
   const [city, setCity] = useState("");
 
-  const [minPrice, setMinPrice] = useState<string | number>("");
-  const [maxPrice, setMaxPrice] = useState<string | number>("");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
 
-  const [skills, setSkills] = useState<string[]>([]);
+  const [skills, setSkills] = useState([]);
   const [newSkill, setNewSkill] = useState("");
 
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [portfolio, setPortfolio] = useState<any[]>([]);
-  const [bookings, setBookings] = useState<any[]>([]);
+  const [avatarUrl, setAvatarUrl] = useState(null);
+  const [portfolio, setPortfolio] = useState([]);
+  const [bookings, setBookings] = useState([]);
 
-  const [kyc, setKyc] = useState<any | null>(null);
+  const [kyc, setKyc] = useState(null);
   const [kycModalOpen, setKycModalOpen] = useState(false);
 
-  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const avatarInputRef = useRef(null);
 
   /* =======================================================
       LOAD PROFILE DATA
@@ -112,7 +112,6 @@ export function CreatorProfile() {
         setLoading(true);
 
         const me = await api("/creator/me");
-
         setProfile(me);
 
         setName(me.fullName || "");
@@ -123,8 +122,9 @@ export function CreatorProfile() {
         setMinPrice(me.minPrice ?? "");
         setMaxPrice(me.maxPrice ?? "");
 
+        // CLOUDINARY URL → DIRECT
         if (me.avatar) {
-          setAvatarUrl(`${API}/uploads/${me.avatar}`);
+          setAvatarUrl(me.avatar);
         }
 
         const pf = await api("/creator/portfolio");
@@ -135,7 +135,7 @@ export function CreatorProfile() {
 
         const k = await api("/creator/kyc");
         setKyc(k);
-      } catch (err: any) {
+      } catch (err) {
         toast.error(err.message);
       } finally {
         setLoading(false);
@@ -163,18 +163,17 @@ export function CreatorProfile() {
 
       toast.success("Profile updated!");
 
-      // optional refresh
-      const me = await api("/creator/me");
-      setProfile(me);
-    } catch (err: any) {
+      const refreshed = await api("/creator/me");
+      setProfile(refreshed);
+    } catch (err) {
       toast.error(err.message);
     }
   };
 
   /* =======================================================
-      AVATAR UPLOAD
+      AVATAR UPLOAD  (CLOUDINARY)
   ======================================================= */
-  const onAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onAvatarFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -187,17 +186,17 @@ export function CreatorProfile() {
         body: form,
       });
 
-      setAvatarUrl(`${API}/uploads/${res.url}`);
+      setAvatarUrl(res.url);   // CLOUDINARY FIXED
       toast.success("Avatar updated!");
-    } catch (err: any) {
+    } catch (err) {
       toast.error(err.message);
     }
   };
 
   /* =======================================================
-      PORTFOLIO UPLOAD
+      PORTFOLIO UPLOAD (CLOUDINARY)
   ======================================================= */
-  const onPortfolioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onPortfolioUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -210,28 +209,27 @@ export function CreatorProfile() {
         body: form,
       });
 
-      // backend returns { images: [url], ids: [id] }
       setPortfolio((p) => [
         ...p,
         { id: res.ids[0], url: res.images[0], title: file.name },
       ]);
-    } catch (err: any) {
+    } catch (err) {
       toast.error(err.message);
     }
   };
 
-  const deletePortfolioItem = async (id: string) => {
+  const deletePortfolioItem = async (id) => {
     try {
       await api(`/creator/portfolio/${id}`, { method: "DELETE" });
       setPortfolio((p) => p.filter((i) => i.id !== id));
       toast.success("Deleted");
-    } catch (err: any) {
+    } catch (err) {
       toast.error(err.message);
     }
   };
 
   /* =======================================================
-      SUBMIT KYC (JSON)
+      SUBMIT KYC 
   ======================================================= */
   const [aadhaar, setAadhaar] = useState("");
   const [pan, setPan] = useState("");
@@ -257,7 +255,7 @@ export function CreatorProfile() {
 
       const refreshed = await api("/creator/kyc");
       setKyc(refreshed);
-    } catch (err: any) {
+    } catch (err) {
       toast.error(err.message);
     }
   };
@@ -278,13 +276,14 @@ export function CreatorProfile() {
   }, [name, phone, bio, city, minPrice, maxPrice, skills]);
 
   /* =======================================================
-      RENDER
+      RENDER UI
   ======================================================= */
   if (authMissing)
     return <div className="p-6 text-center">Login required</div>;
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
+
       {/* TOP CARD */}
       <Card className="p-6">
         <div className="flex gap-6">
@@ -318,8 +317,9 @@ export function CreatorProfile() {
 
           <div className="flex-1">
             <h2 className="text-xl font-semibold">{name}</h2>
+
             {bio && (
-              <p className="text-sm text-neutral-500 mt-1 max-w-md line-clamp-2">
+              <p className="text-sm text-neutral-500 mt-1">
                 {bio}
               </p>
             )}
@@ -552,7 +552,7 @@ export function CreatorProfile() {
                   className="relative group rounded-xl overflow-hidden"
                 >
                   <img
-                    src={`${API}/uploads/${img.url}`}
+                    src={img.url}   // CLOUDINARY FIXED
                     className="object-cover w-full h-full"
                   />
 
