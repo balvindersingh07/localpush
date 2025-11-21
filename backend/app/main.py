@@ -51,9 +51,9 @@ app.include_router(auth_router, prefix="/auth")
 # /events/*
 app.include_router(event_router, prefix="/events")
 
-# ❗STALLS NEED NESTED ROUTES  
-#    /events/{eventId}/stalls
-app.include_router(stall_router)
+# FIXED — STALLS BELONG UNDER EVENTS
+# /events/{eventId}/stalls/*
+app.include_router(stall_router, prefix="/events")
 
 # /bookings/*
 app.include_router(booking_router, prefix="/bookings")
