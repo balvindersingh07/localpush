@@ -25,7 +25,7 @@ interface BookingFlowProps {
 type Draft = {
   eventId: string;
   stallId: string;
-  tier: string; // Basic / Premium / VIP
+  tier: string;
   price: number;
 };
 
@@ -48,13 +48,12 @@ type Stall = {
 
 const API = import.meta.env.VITE_API_URL || "https://sharthi-api.onrender.com";
 
-/* ----------------------- HELPERS ----------------------- */
 function getToken(): string | null {
-  try {
-    return localStorage.getItem("jwt") || localStorage.getItem("sharthi_token");
-  } catch {
-    return null;
-  }
+  return (
+    localStorage.getItem("jwt") ||
+    localStorage.getItem("lp_token") ||
+    localStorage.getItem("sharthi_token")
+  );
 }
 
 async function api(path: string, init: RequestInit = {}) {
@@ -74,21 +73,21 @@ async function api(path: string, init: RequestInit = {}) {
     } catch {}
     throw new Error(msg);
   }
+
   return res.json();
 }
-
-/* ----------------------- MAIN COMPONENT ----------------------- */
 export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
   const [step, setStep] = useState<"review" | "payment" | "success">("review");
+
   const [paymentMethod, setPaymentMethod] = useState<
     "upi" | "card" | "netbanking"
   >("upi");
+
   const [draft, setDraft] = useState<Draft | null>(null);
   const [event, setEvent] = useState<EventMeta | null>(null);
   const [stall, setStall] = useState<Stall | null>(null);
   const [loading, setLoading] = useState(true);
 
-  /* ----------------------- LOAD DRAFT + DETAILS ----------------------- */
   useEffect(() => {
     const raw = localStorage.getItem("sharthi_booking_draft");
     if (!raw) {
@@ -104,31 +103,28 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
 
     (async () => {
       try {
-        // Get events
-        const eventsResp = await fetch(`${API}/events`)
+        const evList = await fetch(`${API}/events`)
           .then((r) => r.json())
-          .catch(() => null);
+          .catch(() => []);
 
-        const eventsList: EventMeta[] = Array.isArray(eventsResp)
-          ? eventsResp
-          : eventsResp?.items ?? [];
+        const foundEvent =
+          evList.find((e: any) => String(e.id) === String(d.eventId)) || null;
 
-        const em = eventsList.find((e) => e.id === d.eventId) || null;
-        if (!cancelled) setEvent(em);
+        if (!cancelled) setEvent(foundEvent);
 
-        // Get stalls for selected event
         const stallsRes = await fetch(`${API}/events/${d.eventId}/stalls`)
           .then((r) => r.json())
           .catch(() => []);
 
-        const stalls: Stall[] = Array.isArray(stallsRes)
+        const stallList = Array.isArray(stallsRes)
           ? stallsRes
-          : stallsRes.stalls ?? [];
+          : stallsRes.stalls || [];
 
-        const st =
-          stalls.find((s) => String(s.id) === String(d.stallId)) || null;
+        const foundStall =
+          stallList.find((s: any) => String(s.id) === String(d.stallId)) ||
+          null;
 
-        if (!cancelled) setStall(st);
+        if (!cancelled) setStall(foundStall);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -138,8 +134,6 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
       cancelled = true;
     };
   }, [onBack]);
-
-  /* ----------------------- AMOUNTS ----------------------- */
   const totals = useMemo(() => {
     const base = draft?.price ?? 0;
     const platform = 0;
@@ -147,8 +141,6 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
     const total = base + platform + gst;
     return { base, platform, gst, total };
   }, [draft]);
-
-  /* ----------------------- PAYMENT ACTION ----------------------- */
   const handlePayment = async () => {
     if (!draft) return;
 
@@ -177,71 +169,49 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
       });
 
       toast.dismiss("pay");
-      toast.success("Payment successful! Your stall is confirmed.");
+      toast.success("Payment successful!");
       setStep("success");
-
       localStorage.removeItem("sharthi_booking_draft");
     } catch (e: any) {
       toast.dismiss("pay");
-      toast.error(e?.message || "Payment failed. Please try again.");
+      toast.error(e?.message || "Payment failed");
     }
   };
-
-  /* ----------------------- SUCCESS SCREEN ----------------------- */
   if (step === "success") {
     return (
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="text-center space-y-6">
-          <div className="w-20 h-20 bg-gradient-to-br from-accent to-secondary rounded-full flex items-center justify-center mx-auto">
-            <Check className="text-white" size={40} />
-          </div>
+      <div className="max-w-2xl mx-auto px-4 py-12 text-center space-y-6">
+        <div className="w-20 h-20 bg-gradient-to-br from-accent to-secondary rounded-full flex items-center justify-center mx-auto">
+          <Check className="text-white" size={40} />
+        </div>
 
-          <div>
-            <h2 className="text-neutral-900 mb-2">Booking Confirmed! 🎉</h2>
-            <p className="text-neutral-600">
-              Your stall has been successfully booked.
-            </p>
-          </div>
+        <h2 className="text-neutral-900">Booking Confirmed 🎉</h2>
+        <p className="text-neutral-600">
+          Your stall has been successfully booked.
+        </p>
 
-          <Card className="p-6 text-left space-y-4">
-            <div className="flex justify-between">
-              <span className="text-neutral-600">Event</span>
-              <span className="text-neutral-900">
-                {event?.title || "Event"}
-              </span>
-            </div>
+        <Card className="p-6 space-y-4">
+          <Row label="Event" value={event?.title} />
+          <Row label="Tier" value={draft?.tier} />
+          <Row
+            label="Total Paid"
+            value={`₹${totals.total.toLocaleString()}`}
+          />
+        </Card>
 
-            <div className="flex justify-between">
-              <span className="text-neutral-600">Stall Tier</span>
-              <span className="text-neutral-900">{draft?.tier}</span>
-            </div>
-
-            <div className="flex justify-between">
-              <span className="text-neutral-600">Total Paid</span>
-              <span className="text-primary">
-                ₹{totals.total.toLocaleString()}
-              </span>
-            </div>
-          </Card>
-
-          <div className="flex gap-3">
-            <Button className="flex-1" onClick={onSuccess}>
-              View My Bookings
-            </Button>
-
-            <Button variant="outline" className="flex-1" onClick={onBack}>
-              Browse More Events
-            </Button>
-          </div>
+        <div className="flex gap-3">
+          <Button className="flex-1" onClick={onSuccess}>
+            View My Bookings
+          </Button>
+          <Button variant="outline" className="flex-1" onClick={onBack}>
+            Browse More Events
+          </Button>
         </div>
       </div>
     );
   }
-
-  /* ----------------------- PAYMENT STEP ----------------------- */
   if (step === "payment") {
     return (
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => setStep("review")}>
             <ArrowLeft size={18} />
@@ -251,113 +221,45 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
 
         <Card className="p-6 space-y-4">
           <div className="flex items-center gap-3 p-3 bg-primary/5 rounded-xl border border-primary/20">
-            <Shield size={20} className="text-primary shrink-0" />
+            <Shield size={20} className="text-primary" />
             <p className="text-neutral-700 text-sm">
-              Your payment is secure and protected by LocalPush
+              Your payment is protected by LocalPush
             </p>
           </div>
 
-          {/* Payment Options */}
-          <div>
-            <Label className="mb-3">Select Payment Method</Label>
+          <Label>Select Payment Method</Label>
 
-            <RadioGroup
-              value={paymentMethod}
-              onValueChange={(v: string) =>
-                setPaymentMethod(v as "upi" | "card" | "netbanking")
-              }
-            >
-              <div className="space-y-3">
-                {/* UPI */}
-                <Card
-                  className={`p-4 cursor-pointer ${
-                    paymentMethod === "upi"
-                      ? "border-primary bg-primary/5"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <RadioGroupItem value="upi" id="upi" />
-                    <Label htmlFor="upi" className="flex-1 cursor-pointer">
-                      UPI
-                    </Label>
-                    <span className="text-accent text-sm">Recommended</span>
-                  </div>
-                </Card>
+          <RadioGroup
+            value={paymentMethod}
+            onValueChange={(v) =>
+              setPaymentMethod(v as "upi" | "card" | "netbanking")
+            }
+          >
+            <PayOption value="upi" label="UPI" recommended />
+            <PayOption value="card" label="Credit/Debit Card" />
+            <PayOption value="netbanking" label="Net Banking" />
+          </RadioGroup>
 
-                {/* CARD */}
-                <Card
-                  className={`p-4 cursor-pointer ${
-                    paymentMethod === "card"
-                      ? "border-primary bg-primary/5"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <RadioGroupItem value="card" id="card" />
-                    <Label htmlFor="card" className="flex-1 cursor-pointer">
-                      Credit/Debit Card
-                    </Label>
-                  </div>
-                </Card>
-
-                {/* NETBANKING */}
-                <Card
-                  className={`p-4 cursor-pointer ${
-                    paymentMethod === "netbanking"
-                      ? "border-primary bg-primary/5"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <RadioGroupItem value="netbanking" id="netbanking" />
-                    <Label htmlFor="netbanking" className="flex-1 cursor-pointer">
-                      Net Banking
-                    </Label>
-                  </div>
-                </Card>
-              </div>
-            </RadioGroup>
-          </div>
-
-          {/* Dynamic fields */}
           {paymentMethod === "upi" && (
-            <div className="space-y-3">
-              <Label htmlFor="upi-id">UPI ID</Label>
-              <Input id="upi-id" placeholder="yourname@upi" />
-            </div>
+            <Input placeholder="yourname@upi" className="mt-3" />
           )}
 
           {paymentMethod === "card" && (
-            <div className="space-y-3">
-              <div>
-                <Label htmlFor="card-number">Card Number</Label>
-                <Input id="card-number" placeholder="1234 5678 9012 3456" />
-              </div>
-
+            <div className="space-y-3 mt-3">
+              <Input placeholder="Card Number" />
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label htmlFor="expiry">Expiry</Label>
-                  <Input id="expiry" placeholder="MM/YY" />
-                </div>
-
-                <div>
-                  <Label htmlFor="cvv">CVV</Label>
-                  <Input id="cvv" placeholder="123" type="password" />
-                </div>
+                <Input placeholder="MM/YY" />
+                <Input placeholder="CVV" />
               </div>
             </div>
           )}
 
           <Separator />
 
-          {/* Total */}
-          <div className="flex justify-between">
-            <span className="text-neutral-600">Total Amount</span>
-            <span className="text-primary">
-              ₹{totals.total.toLocaleString()}
-            </span>
-          </div>
+          <Row
+            label="Total Amount"
+            value={`₹${totals.total.toLocaleString()}`}
+          />
 
           <Button className="w-full" size="lg" onClick={handlePayment}>
             <CreditCard size={18} className="mr-2" />
@@ -367,11 +269,8 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
       </div>
     );
   }
-
-  /* ----------------------- REVIEW STEP ----------------------- */
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* Header */}
+    <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="sm" onClick={onBack}>
           <ArrowLeft size={18} />
@@ -379,124 +278,96 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
         <h2 className="text-neutral-900">Review Booking</h2>
       </div>
 
-      {/* EVENT DETAILS */}
       <Card className="p-6 space-y-4">
-        <div>
-          <h3 className="text-neutral-900 mb-3">Event Details</h3>
+        <h3 className="text-neutral-900">Event Details</h3>
 
-          <div className="space-y-2">
-            <p className="text-neutral-900">{event?.title || "Event"}</p>
-
-            <div className="flex items-center gap-2 text-neutral-600 text-sm">
-              <Calendar size={16} />
-              <span>
-                {event?.startAt
-                  ? new Date(event.startAt).toLocaleDateString()
-                  : "—"}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2 text-neutral-600 text-sm">
-              <MapPin size={16} />
-              <span>{event?.cityId || "—"}</span>
-            </div>
-          </div>
-        </div>
+        <Row label="Event" value={event?.title} />
+        <Row
+          label="Date"
+          value={
+            event?.startAt
+              ? new Date(event.startAt).toLocaleDateString()
+              : "—"
+          }
+        />
+        <Row label="City" value={event?.cityId} />
 
         <Separator />
 
-        {/* STALL DETAILS */}
-        <div>
-          <h3 className="text-neutral-900 mb-3">Stall Details</h3>
+        <h3 className="text-neutral-900">Stall Details</h3>
 
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <span className="text-neutral-600">Tier</span>
-              <span className="text-neutral-900">{draft?.tier}</span>
-            </div>
-
-            <div className="flex justify-between">
-              <span className="text-neutral-600">Stall</span>
-              <span className="text-neutral-900">{stall?.name || "—"}</span>
-            </div>
-
-            <div className="flex justify-between">
-              <span className="text-neutral-600">Price</span>
-              <span className="text-neutral-900">
-                ₹{(draft?.price || 0).toLocaleString()}
-              </span>
-            </div>
-          </div>
-        </div>
+        <Row label="Tier" value={draft?.tier} />
+        <Row label="Stall" value={stall?.name} />
+        <Row label="Price" value={`₹${totals.base.toLocaleString()}`} />
 
         <Separator />
 
-        {/* BILLING SUMMARY */}
-        <div className="space-y-2">
-          <div className="flex justify-between">
-            <span className="text-neutral-600">Stall price</span>
-            <span className="text-neutral-900">₹{totals.base}</span>
-          </div>
+        <h3 className="text-neutral-900">Billing Summary</h3>
+        <Row label="Stall Price" value={`₹${totals.base}`} />
+        <Row label="Platform Fee" value={`₹${totals.platform}`} />
+        <Row label="GST" value={`₹${totals.gst}`} />
 
-          <div className="flex justify-between">
-            <span className="text-neutral-600">Platform fee</span>
-            <span className="text-neutral-900">₹{totals.platform}</span>
-          </div>
+        <Separator />
 
-          <div className="flex justify-between">
-            <span className="text-neutral-600">GST (18%)</span>
-            <span className="text-neutral-900">₹{totals.gst}</span>
-          </div>
-
-          <Separator />
-
-          <div className="flex justify-between">
-            <span className="text-neutral-900">Total</span>
-            <span className="text-primary">
-              ₹{totals.total.toLocaleString()}
-            </span>
-          </div>
-        </div>
+        <Row
+          label="Total"
+          value={`₹${totals.total.toLocaleString()}`}
+          bold
+        />
       </Card>
 
-      {/* CONTACT DETAILS */}
-      <Card className="p-6 space-y-4">
-        <h3 className="text-neutral-900">Contact Details</h3>
-
-        <div className="space-y-3">
-          <div>
-            <Label htmlFor="name">Full Name</Label>
-            <Input id="name" defaultValue="Priya Sharma" />
-          </div>
-
-          <div>
-            <Label htmlFor="phone">Phone Number</Label>
-            <Input id="phone" defaultValue="+91 98765 43210" />
-          </div>
-
-          <div>
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" defaultValue="priya@example.com" />
-          </div>
-        </div>
-      </Card>
-
-      <Card className="p-4 bg-neutral-50">
-        <p className="text-neutral-700 text-sm">
-          By proceeding, you agree to the event's cancellation policy and
-          LocalPush's terms of service.
-        </p>
-      </Card>
-
-      {/* BUTTON */}
       <Button
         className="w-full"
         size="lg"
         disabled={loading || !draft}
         onClick={() => setStep("payment")}
       >
-        <IndianRupee size={18} className="mr-2" /> Proceed to Payment
+        <IndianRupee size={16} className="mr-2" />
+        Proceed to Payment
       </Button>
     </div>
+  );
+}
+function Row({
+  label,
+  value,
+  bold,
+}: {
+  label: string;
+  value?: any;
+  bold?: boolean;
+}) {
+  return (
+    <div className="flex justify-between text-sm">
+      <span className="text-neutral-600">{label}</span>
+      <span className={bold ? "text-neutral-900 font-semibold" : "text-neutral-900"}>
+        {value ?? "—"}
+      </span>
+    </div>
+  );
+}
+
+function PayOption({
+  value,
+  label,
+  recommended,
+}: {
+  value: string;
+  label: string;
+  recommended?: boolean;
+}) {
+  return (
+    <Card
+      className="p-4 cursor-pointer mt-2 flex items-center gap-3"
+      onClick={() => {}}
+    >
+      <RadioGroupItem value={value} id={value} />
+      <Label htmlFor={value} className="flex-1 cursor-pointer">
+        {label}
+      </Label>
+      {recommended && (
+        <span className="text-accent text-xs">Recommended</span>
+      )}
+    </Card>
   );
 }

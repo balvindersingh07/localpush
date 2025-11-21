@@ -7,7 +7,7 @@ from datetime import datetime
 from app.database import db
 from app.auth.routes import oauth2_scheme
 from app.config import settings
-from app.organizer.schemas import OrganizerProfile, VenueCreate
+from app.events.routes import serialize_event   # IMPORTANT FIX
 
 organizer_router = APIRouter(tags=["Organizer"])
 
@@ -39,7 +39,6 @@ def get_user_id(token: str = Depends(oauth2_scheme)):
 def get_me(userId: str = Depends(get_user_id)):
 
     data = organizers.find_one({"userId": userId})
-
     if not data:
         organizers.insert_one({
             "userId": userId,
@@ -81,11 +80,11 @@ def get_me(userId: str = Depends(get_user_id)):
 # UPDATE PROFILE
 # -----------------------------
 @organizer_router.patch("/me")
-def update_profile(payload: OrganizerProfile, userId: str = Depends(get_user_id)):
+def update_profile(payload: dict, userId: str = Depends(get_user_id)):
 
     organizers.update_one(
         {"userId": userId},
-        {"$set": payload.dict()}
+        {"$set": payload}
     )
 
     return {"message": "Profile updated successfully"}
@@ -102,10 +101,10 @@ def get_venues(userId: str = Depends(get_user_id)):
     return [
         {
             "id": str(v["_id"]),
-            "name": v["name"],
-            "city": v["city"],
-            "description": v["description"],
-            "tier": v["tier"]
+            "name": v.get("name", ""),
+            "city": v.get("city", ""),
+            "description": v.get("description", ""),
+            "tier": v.get("tier", "")
         }
         for v in data
     ]
@@ -115,14 +114,14 @@ def get_venues(userId: str = Depends(get_user_id)):
 # ADD VENUE
 # -----------------------------
 @organizer_router.post("/venues")
-def add_venue(data: VenueCreate, userId: str = Depends(get_user_id)):
+def add_venue(data: dict, userId: str = Depends(get_user_id)):
 
     venues.insert_one({
         "organizerId": userId,
-        "name": data.name,
-        "city": data.city,
-        "description": data.description,
-        "tier": data.tier
+        "name": data.get("name", ""),
+        "city": data.get("city", ""),
+        "description": data.get("description", ""),
+        "tier": data.get("tier", "")
     })
 
     return {"message": "Venue added successfully"}
@@ -135,7 +134,6 @@ def add_venue(data: VenueCreate, userId: str = Depends(get_user_id)):
 def delete_venue(venueId: str, userId: str = Depends(get_user_id)):
 
     v = venues.find_one({"_id": ObjectId(venueId)})
-
     if not v:
         raise HTTPException(404, "Venue not found")
 
@@ -177,7 +175,7 @@ def upload_docs(
 
 
 # -----------------------------
-# DASHBOARD
+# DASHBOARD TOP STATS
 # -----------------------------
 @organizer_router.get("/dashboard")
 def organizer_dashboard(userId: str = Depends(get_user_id)):
@@ -188,12 +186,14 @@ def organizer_dashboard(userId: str = Depends(get_user_id)):
     revenue = sum(b.get("amount", 0) for b in user_bookings)
     stalls_sold = len(user_bookings)
     total_stalls = stalls.count_documents({"organizerId": userId})
-    active_events = events.count_documents({"organizerId": userId, "status": "active"})
+    active_events = events.count_documents(
+        {"organizerId": userId, "status": "active"}
+    )
     total_views = sum(e.get("views", 0) for e in user_events)
 
     now = datetime.now()
 
-    # last 5 months revenue
+    # Monthly revenue (5 months)
     trend = []
     for i in range(4, -1, -1):
         month = (now.month - i - 1) % 12 + 1
@@ -210,7 +210,7 @@ def organizer_dashboard(userId: str = Depends(get_user_id)):
             "amount": month_total
         })
 
-    # weekly bookings this month
+    # Weekly booking count
     monthly_counts = [0, 0, 0, 0]
 
     for b in user_bookings:
@@ -231,27 +231,15 @@ def organizer_dashboard(userId: str = Depends(get_user_id)):
 
 
 # -----------------------------
-# MY EVENTS
+# MY EVENTS (FULL FIX)
 # -----------------------------
 @organizer_router.get("/me/events")
 def get_my_events(userId: str = Depends(get_user_id)):
 
-    my_events = list(events.find({"organizerId": userId}))
+    my_events = list(events.find({"organizerId": userId}).sort("createdAt", -1))
 
-    return [
-        {
-            "id": str(e["_id"]),
-            "title": e.get("title", ""),
-            "views": e.get("views", 0),
-            "status": e.get("status", "active"),
-            "startAt": e.get("startAt"),
-            "endAt": e.get("endAt"),
-            "revenue": 0,
-            "stallsSold": 0,
-            "totalStalls": 0,
-        }
-        for e in my_events
-    ]
+    # Return fully serialized events compatible with FE
+    return [serialize_event(e) for e in my_events]
 
 
 # -----------------------------
@@ -275,7 +263,7 @@ def get_my_bookings(userId: str = Depends(get_user_id)):
 
 
 # -----------------------------
-# STATS TOP CARDS
+# STATS SHORT VERSION
 # -----------------------------
 @organizer_router.get("/me/stats")
 def organizer_stats(userId: str = Depends(get_user_id)):

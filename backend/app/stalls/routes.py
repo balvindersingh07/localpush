@@ -1,177 +1,182 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from bson import ObjectId
 
+from datetime import datetime
 from app.database import db
+from app.auth.routes import oauth2_scheme
+from app.config import settings
+from jose import jwt
+
 
 stall_router = APIRouter(tags=["Stalls"])
 
-stalls_collection = db["stalls"]
+stalls = db["stalls"]
+events = db["events"]
 
 
-# -----------------------------------------------------------
-# HELPER → serialize Mongo stall document
-# -----------------------------------------------------------
+# ------------------------------------------------
+# JWT → Get userId from token
+# ------------------------------------------------
+def get_user_id(token: str = Depends(oauth2_scheme)):
+    try:
+        decoded = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGO])
+        return decoded.get("id")
+    except:
+        raise HTTPException(401, "Invalid or expired token")
+
+
+# ------------------------------------------------
+# Stall Serializer
+# ------------------------------------------------
 def serialize_stall(s):
     return {
-        "id": str(s.get("_id") or s.get("id")),
-        "eventId": str(s.get("eventId") or ""),
-        "name": s.get("name") or "",
-        "tier": str(s.get("tier") or s.get("Tier") or s.get("tierName") or "SILVER").upper(),
-        "price": int(s.get("price") or s.get("amount") or 0),
+        "id": str(s["_id"]),
+        "eventId": s.get("eventId", ""),
+        "organizerId": s.get("organizerId", ""),
 
-        "qtyTotal": int(
-            s.get("qtyTotal")
-            or s.get("qty_total")
-            or s.get("total")
-            or s.get("qtyTotalCount")
-            or 0
-        ),
+        "name": s.get("name") or s.get("stallName") or "",
+        "tier": s.get("tier", "SILVER"),
 
-        "qtyLeft": int(
-            s.get("qtyLeft")
-            or s.get("qtyleft")
-            or s.get("qty_remaining")
-            or s.get("qtyAvailable")
-            or 0
-        ),
+        "price": s.get("price", 0),
+        "qtyTotal": s.get("qtyTotal", 0),
+        "qtyLeft": s.get("qtyLeft", 0),
 
-        "specs": s.get("specs") or None,
+        "specs": s.get("specs", ""),
+        "createdAt": s.get("createdAt").isoformat() if s.get("createdAt") else None,
     }
 
 
-# ===========================================================
-# 1) GET ALL STALLS FOR EVENT
-#     Frontend: GET  /events/{eventId}/stalls
-# ===========================================================
+# ------------------------------------------------
+# GET ALL STALLS FOR EVENT
+# ------------------------------------------------
 @stall_router.get("/events/{eventId}/stalls")
-def get_stalls(eventId: str):
-    if not ObjectId.is_valid(eventId):
-        raise HTTPException(400, "Invalid eventId")
-
-    docs = list(stalls_collection.find({"eventId": ObjectId(eventId)}))
-    return [serialize_stall(s) for s in docs]
-
-
-# ===========================================================
-# 2) CREATE STALL FOR EVENT
-#     Frontend: POST /stalls/events/{eventId}/stalls
-# ===========================================================
-@stall_router.post("/stalls/events/{eventId}/stalls")
-def create_stall(eventId: str, payload: dict):
+def get_stalls(eventId: str, userId: str = Depends(get_user_id)):
 
     if not ObjectId.is_valid(eventId):
         raise HTTPException(400, "Invalid eventId")
 
-    name = (payload.get("name") or "").strip()
-    if not name:
-        raise HTTPException(400, "Stall name is required")
+    # Ensure event exists
+    ev = events.find_one({"_id": ObjectId(eventId)})
+    if not ev:
+        raise HTTPException(404, "Event not found")
 
-    try:
-        price = int(payload.get("price") or 0)
-        qty_total = int(payload.get("qtyTotal") or 0)
-    except ValueError:
-        raise HTTPException(400, "price and qtyTotal must be numbers")
+    # Organizer can only view their own event stalls
+    if ev.get("organizerId") != userId:
+        raise HTTPException(403, "You are not authorized for this event")
 
-    if qty_total < 0 or price < 0:
-        raise HTTPException(400, "price and qtyTotal must be >= 0")
+    found = list(stalls.find({"eventId": eventId}).sort("createdAt", -1))
+    return {"stalls": [serialize_stall(s) for s in found]}
 
-    tier = (payload.get("tier") or "SILVER").upper()
-    specs = payload.get("specs") or ""
 
-    doc = {
-        "eventId": ObjectId(eventId),
-        "name": name,
-        "tier": tier,
-        "price": price,
-        "qtyTotal": qty_total,
-        # jab create kar rahe → saari qty available
-        "qtyLeft": qty_total,
-        "specs": specs,
+# ------------------------------------------------
+# CREATE NEW STALL
+# ------------------------------------------------
+@stall_router.post("/events/{eventId}/stalls")
+def create_stall(eventId: str, data: dict, userId: str = Depends(get_user_id)):
+
+    if not ObjectId.is_valid(eventId):
+        raise HTTPException(400, "Invalid eventId")
+
+    # Ensure event exists
+    ev = events.find_one({"_id": ObjectId(eventId)})
+    if not ev:
+        raise HTTPException(404, "Event not found")
+
+    # Organizer only
+    if ev.get("organizerId") != userId:
+        raise HTTPException(403, "You are not authorized to add stalls")
+
+    new_stall = {
+        "eventId": eventId,
+        "organizerId": userId,
+
+        "name": data.get("name", ""),
+        "tier": data.get("tier", "SILVER"),
+        "price": int(data.get("price", 0)),
+
+        "qtyTotal": int(data.get("qtyTotal", 0)),
+        "qtyLeft": int(data.get("qtyTotal", 0)),
+
+        "specs": data.get("specs", ""),
+
+        "createdAt": datetime.now(),
     }
 
-    result = stalls_collection.insert_one(doc)
-    created = stalls_collection.find_one({"_id": result.inserted_id})
+    result = stalls.insert_one(new_stall)
+    saved = stalls.find_one({"_id": result.inserted_id})
 
     return {
-        "message": "Stall created",
-        "stall": serialize_stall(created),
+        "message": "Stall created successfully",
+        "stall": serialize_stall(saved),
     }
 
 
-# ===========================================================
-# 3) UPDATE STALL
-#     Frontend: PATCH /stalls/stalls/{stallId}
-# ===========================================================
-@stall_router.patch("/stalls/stalls/{stallId}")
-def update_stall(stallId: str, payload: dict):
+# ------------------------------------------------
+# EDIT STALL
+# ------------------------------------------------
+@stall_router.patch("/stalls/{stallId}")
+def edit_stall(stallId: str, data: dict, userId: str = Depends(get_user_id)):
 
     if not ObjectId.is_valid(stallId):
         raise HTTPException(400, "Invalid stallId")
 
-    existing = stalls_collection.find_one({"_id": ObjectId(stallId)})
-    if not existing:
+    s = stalls.find_one({"_id": ObjectId(stallId)})
+    if not s:
         raise HTTPException(404, "Stall not found")
 
-    update = {}
+    # Organizer only
+    if s.get("organizerId") != userId:
+        raise HTTPException(403, "Not authorized")
 
-    # name
-    if "name" in payload:
-        update["name"] = (payload.get("name") or "").strip()
+    update_data = {}
 
-    # tier
-    if "tier" in payload:
-        update["tier"] = str(payload.get("tier") or "SILVER").upper()
+    if "name" in data:
+        update_data["name"] = data["name"]
+    if "tier" in data:
+        update_data["tier"] = data["tier"]
+    if "price" in data:
+        update_data["price"] = int(data["price"])
+    if "qtyTotal" in data:
+        qty_new = int(data["qtyTotal"])
+        sold = s["qtyTotal"] - s["qtyLeft"]
+        if qty_new < sold:
+            raise HTTPException(400, "Cannot reduce below already sold quantity")
+        update_data["qtyTotal"] = qty_new
+        update_data["qtyLeft"] = qty_new - sold
+    if "specs" in data:
+        update_data["specs"] = data["specs"]
 
-    # price
-    if "price" in payload:
-        try:
-            update["price"] = int(payload.get("price") or 0)
-        except ValueError:
-            raise HTTPException(400, "price must be a number")
+    stalls.update_one({"_id": ObjectId(stallId)}, {"$set": update_data})
+    updated = stalls.find_one({"_id": ObjectId(stallId)})
 
-    # qtyTotal → keep 'sold' same, adjust qtyLeft
-    if "qtyTotal" in payload:
-        try:
-            new_qty_total = int(payload.get("qtyTotal") or 0)
-        except ValueError:
-            raise HTTPException(400, "qtyTotal must be a number")
-
-        old_total = int(existing.get("qtyTotal") or 0)
-        old_left = int(existing.get("qtyLeft") or 0)
-        sold = max(0, old_total - old_left)
-
-        update["qtyTotal"] = new_qty_total
-        update["qtyLeft"] = max(0, new_qty_total - sold)
-
-    # specs
-    if "specs" in payload:
-        update["specs"] = payload.get("specs") or ""
-
-    if not update:
-        return {"message": "Nothing to update"}
-
-    stalls_collection.update_one({"_id": ObjectId(stallId)}, {"$set": update})
-
-    updated = stalls_collection.find_one({"_id": ObjectId(stallId)})
     return {
-        "message": "Stall updated",
-        "stall": serialize_stall(updated),
+        "message": "Stall updated successfully",
+        "stall": serialize_stall(updated)
     }
 
 
-# ===========================================================
-# 4) DELETE STALL
-#     Frontend: DELETE /stalls/stalls/{stallId}
-# ===========================================================
-@stall_router.delete("/stalls/stalls/{stallId}")
-def delete_stall(stallId: str):
+# ------------------------------------------------
+# DELETE STALL
+# ------------------------------------------------
+@stall_router.delete("/stalls/{stallId}")
+def delete_stall(stallId: str, userId: str = Depends(get_user_id)):
 
     if not ObjectId.is_valid(stallId):
         raise HTTPException(400, "Invalid stallId")
 
-    result = stalls_collection.delete_one({"_id": ObjectId(stallId)})
-
-    if result.deleted_count == 0:
+    s = stalls.find_one({"_id": ObjectId(stallId)})
+    if not s:
         raise HTTPException(404, "Stall not found")
 
-    return {"message": "Stall deleted"}
+    # Organizer only
+    if s.get("organizerId") != userId:
+        raise HTTPException(403, "Not authorized")
+
+    # If stall already sold, prevent deletion
+    sold = s["qtyTotal"] - s["qtyLeft"]
+    if sold > 0:
+        raise HTTPException(400, "Cannot delete stall that has bookings")
+
+    stalls.delete_one({"_id": ObjectId(stallId)})
+
+    return {"message": "Stall deleted successfully"}

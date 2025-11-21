@@ -10,6 +10,7 @@ from jose import jwt
 event_router = APIRouter(tags=["Events"])
 
 events = db["events"]
+stalls_col = db["stalls"]
 
 
 # ------------------------------------------------
@@ -24,11 +25,15 @@ def get_user_id(token: str = Depends(oauth2_scheme)):
 
 
 # ------------------------------------------------
-# SERIALIZER → Convert Mongo Document
+# SERIALIZER → Convert Mongo Event doc
 # ------------------------------------------------
 def serialize_event(e):
+    if not e:
+        return None
+
     return {
         "id": str(e["_id"]),
+        "organizerId": e.get("organizerId", ""),
         "title": e.get("title", ""),
         "cityId": e.get("cityId", ""),
 
@@ -40,14 +45,18 @@ def serialize_event(e):
         "venueName": e.get("venueName", ""),
         "description": e.get("description", ""),
 
+        "coverImage": e.get("coverImage", ""),
+        "bannerImage": e.get("bannerImage", ""),
+
         "views": e.get("views", 0),
         "status": e.get("status", "active"),
+
         "createdAt": e.get("createdAt").isoformat() if e.get("createdAt") else None,
     }
 
 
 # ------------------------------------------------
-# GET ALL EVENTS
+# GET ALL EVENTS  → GET /events
 # ------------------------------------------------
 @event_router.get("")
 def get_events(city: str | None = None, tags: str | None = None):
@@ -62,12 +71,11 @@ def get_events(city: str | None = None, tags: str | None = None):
         query["tags"] = {"$in": tag_list}
 
     fetched = list(events.find(query).sort("createdAt", -1))
-
     return [serialize_event(e) for e in fetched]
 
 
 # ------------------------------------------------
-# GET SINGLE EVENT BY ID   (FIXED FOR FRONTEND)
+# GET SINGLE EVENT BY ID  → GET /events/{eventId}
 # ------------------------------------------------
 @event_router.get("/{eventId}")
 def get_event(eventId: str):
@@ -83,25 +91,26 @@ def get_event(eventId: str):
 
 
 # ------------------------------------------------
-# CREATE EVENT (POST /events)
+# CREATE EVENT  → POST /events
 # ------------------------------------------------
 @event_router.post("")
 def create_event(payload: dict, userId: str = Depends(get_user_id)):
 
-    # --- Utility for safe date parsing ---
+    # Safe date conversion
     def safe_date(value):
         try:
             return datetime.fromisoformat(value) if value else datetime.now()
         except:
             return datetime.now()
 
+    # Required fields
     title = payload.get("title") or "Untitled Event"
     cityId = payload.get("cityId") or ""
 
     start_date = safe_date(payload.get("startAt"))
     end_date = safe_date(payload.get("endAt"))
 
-    # Tags must always be Array
+    # Ensure tags is always an array
     tags = payload.get("tags", [])
     if isinstance(tags, str):
         tags = [t.strip().lower() for t in tags.split(",") if t.strip()]
@@ -125,17 +134,22 @@ def create_event(payload: dict, userId: str = Depends(get_user_id)):
 
         "views": 0,
         "status": "active",
-        "createdAt": datetime.now()
+        "createdAt": datetime.now(),
     }
 
     result = events.insert_one(event_data)
 
+    # Fetch event again so frontend gets full data
+    new_event = events.find_one({"_id": result.inserted_id})
+
     return {
         "message": "Event created successfully",
-        "id": str(result.inserted_id)
+        "event": serialize_event(new_event)
     }
+
+
 # ------------------------------------------------
-# GET ALL STALLS OF EVENT  →  /events/{eventId}/stalls
+# GET ALL STALLS OF EVENT  → GET /events/{eventId}/stalls
 # ------------------------------------------------
 @event_router.get("/{eventId}/stalls")
 def get_event_stalls(eventId: str):
@@ -143,9 +157,8 @@ def get_event_stalls(eventId: str):
     if not ObjectId.is_valid(eventId):
         raise HTTPException(400, "Invalid eventId")
 
-    stalls = list(db["stalls"].find({"eventId": eventId}))
+    stalls = list(stalls_col.find({"eventId": eventId}))
 
-    # Convert Mongo docs
     def serialize_stall(s):
         return {
             "id": str(s["_id"]),
