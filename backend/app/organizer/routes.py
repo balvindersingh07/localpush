@@ -7,7 +7,7 @@ from datetime import datetime
 from app.database import db
 from app.auth.routes import oauth2_scheme
 from app.config import settings
-from app.events.routes import serialize_event   # IMPORTANT FIX
+from app.events.routes import serialize_event   # required for FE compatibility
 
 organizer_router = APIRouter(tags=["Organizer"])
 
@@ -27,18 +27,19 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 def get_user_id(token: str = Depends(oauth2_scheme)):
     try:
         decoded = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGO])
-        return decoded.get("id")
+        return decoded["id"]
     except:
         raise HTTPException(401, "Invalid or expired token")
 
 
 # -----------------------------
-# GET PROFILE
+# PROFILE → GET /organizer/me
 # -----------------------------
 @organizer_router.get("/me")
 def get_me(userId: str = Depends(get_user_id)):
 
     data = organizers.find_one({"userId": userId})
+
     if not data:
         organizers.insert_one({
             "userId": userId,
@@ -91,7 +92,7 @@ def update_profile(payload: dict, userId: str = Depends(get_user_id)):
 
 
 # -----------------------------
-# VENUE LIST
+# VENUES
 # -----------------------------
 @organizer_router.get("/venues")
 def get_venues(userId: str = Depends(get_user_id)):
@@ -110,9 +111,6 @@ def get_venues(userId: str = Depends(get_user_id)):
     ]
 
 
-# -----------------------------
-# ADD VENUE
-# -----------------------------
 @organizer_router.post("/venues")
 def add_venue(data: dict, userId: str = Depends(get_user_id)):
 
@@ -127,9 +125,6 @@ def add_venue(data: dict, userId: str = Depends(get_user_id)):
     return {"message": "Venue added successfully"}
 
 
-# -----------------------------
-# DELETE VENUE
-# -----------------------------
 @organizer_router.delete("/venues/{venueId}")
 def delete_venue(venueId: str, userId: str = Depends(get_user_id)):
 
@@ -145,7 +140,7 @@ def delete_venue(venueId: str, userId: str = Depends(get_user_id)):
 
 
 # -----------------------------
-# KYC DOCUMENTS UPLOAD
+# KYC UPLOAD
 # -----------------------------
 @organizer_router.post("/kyc/upload")
 def upload_docs(
@@ -175,7 +170,7 @@ def upload_docs(
 
 
 # -----------------------------
-# DASHBOARD TOP STATS
+# DASHBOARD STATS
 # -----------------------------
 @organizer_router.get("/dashboard")
 def organizer_dashboard(userId: str = Depends(get_user_id)):
@@ -193,7 +188,7 @@ def organizer_dashboard(userId: str = Depends(get_user_id)):
 
     now = datetime.now()
 
-    # Monthly revenue (5 months)
+    # Revenue trend (5 months)
     trend = []
     for i in range(4, -1, -1):
         month = (now.month - i - 1) % 12 + 1
@@ -210,7 +205,7 @@ def organizer_dashboard(userId: str = Depends(get_user_id)):
             "amount": month_total
         })
 
-    # Weekly booking count
+    # Weekly bookings
     monthly_counts = [0, 0, 0, 0]
 
     for b in user_bookings:
@@ -231,15 +226,16 @@ def organizer_dashboard(userId: str = Depends(get_user_id)):
 
 
 # -----------------------------
-# MY EVENTS (FULL FIX)
+# FIXED: MY EVENTS (CRITICAL)
 # -----------------------------
 @organizer_router.get("/me/events")
 def get_my_events(userId: str = Depends(get_user_id)):
 
-    my_events = list(events.find({"organizerId": userId}).sort("createdAt", -1))
+    evs = list(events.find({"organizerId": userId}).sort("createdAt", -1))
 
-    # Return fully serialized events compatible with FE
-    return [serialize_event(e) for e in my_events]
+    return {
+        "items": [serialize_event(e) for e in evs]
+    }
 
 
 # -----------------------------
@@ -253,8 +249,8 @@ def get_my_bookings(userId: str = Depends(get_user_id)):
     return [
         {
             "id": str(b["_id"]),
-            "eventId": b.get("eventId", ""),
-            "stallId": b.get("stallId", ""),
+            "eventId": b.get("eventId"),
+            "stallId": b.get("stallId"),
             "amount": b.get("amount", 0),
             "date": b.get("date"),
         }
@@ -263,7 +259,7 @@ def get_my_bookings(userId: str = Depends(get_user_id)):
 
 
 # -----------------------------
-# STATS SHORT VERSION
+# QUICK STATS
 # -----------------------------
 @organizer_router.get("/me/stats")
 def organizer_stats(userId: str = Depends(get_user_id)):
@@ -271,11 +267,11 @@ def organizer_stats(userId: str = Depends(get_user_id)):
     total_events = events.count_documents({"organizerId": userId})
     total_bookings = bookings.count_documents({"organizerId": userId})
     revenue = sum(b.get("amount", 0) for b in bookings.find({"organizerId": userId}))
-    total_views = sum(e.get("views", 0) for e in events.find({"organizerId": userId}))
+    views = sum(e.get("views", 0) for e in events.find({"organizerId": userId}))
 
     return {
         "totalEvents": total_events,
         "totalBookings": total_bookings,
         "revenue": revenue,
-        "views": total_views
+        "views": views
     }

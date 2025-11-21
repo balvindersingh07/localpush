@@ -12,7 +12,6 @@ event_router = APIRouter(tags=["Events"])
 events = db["events"]
 stalls_col = db["stalls"]
 
-
 # ------------------------------------------------
 # JWT → Get userId
 # ------------------------------------------------
@@ -25,49 +24,43 @@ def get_user_id(token: str = Depends(oauth2_scheme)):
 
 
 # ------------------------------------------------
-# SERIALIZER
+# SERIALIZER (FULL FE COMPATIBLE)
 # ------------------------------------------------
 def serialize_event(e):
-    if not e:
-        return None
-
     return {
         "id": str(e["_id"]),
-        "organizerId": e.get("organizerId", ""),
-        "title": e.get("title", ""),
-        "cityId": e.get("cityId", ""),
+        "organizerId": e.get("organizerId"),
+        "title": e.get("title"),
+        "cityId": e.get("cityId"),
 
-        "startAt": e.get("startAt").isoformat() if e.get("startAt") else None,
-        "endAt": e.get("endAt").isoformat() if e.get("endAt") else None,
+        "startAt": e["startAt"].isoformat() if e.get("startAt") else None,
+        "endAt": e["endAt"].isoformat() if e.get("endAt") else None,
 
         "tags": e.get("tags", []),
-        "location": e.get("location", ""),
         "venueName": e.get("venueName", ""),
+        "location": e.get("location", ""),
         "description": e.get("description", ""),
-
         "coverImage": e.get("coverImage", ""),
         "bannerImage": e.get("bannerImage", ""),
 
         "views": e.get("views", 0),
         "status": e.get("status", "active"),
 
-        "createdAt": e.get("createdAt").isoformat() if e.get("createdAt") else None,
+        "createdAt": e["createdAt"].isoformat() if e.get("createdAt") else None,
     }
 
 
 # ------------------------------------------------
-# GET ALL EVENTS  → GET /events
+# GET ALL EVENTS
 # ------------------------------------------------
 @event_router.get("/")
 def get_events(city: str | None = None, tags: str | None = None):
-
     query = {}
-
     if city:
         query["cityId"] = {"$regex": city, "$options": "i"}
 
     if tags:
-        tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
+        tag_list = [t.strip().lower() for t in tags.split(",")]
         query["tags"] = {"$in": tag_list}
 
     fetched = list(events.find(query).sort("createdAt", -1))
@@ -75,11 +68,10 @@ def get_events(city: str | None = None, tags: str | None = None):
 
 
 # ------------------------------------------------
-# GET SINGLE EVENT → GET /events/{eventId}
+# GET SINGLE EVENT
 # ------------------------------------------------
 @event_router.get("/{eventId}")
 def get_event(eventId: str):
-
     if not ObjectId.is_valid(eventId):
         raise HTTPException(400, "Invalid eventId")
 
@@ -91,24 +83,21 @@ def get_event(eventId: str):
 
 
 # ------------------------------------------------
-# CREATE EVENT → POST /events
+# CREATE EVENT
 # ------------------------------------------------
 @event_router.post("/")
 def create_event(payload: dict, userId: str = Depends(get_user_id)):
 
-    def safe_date(value):
+    def safe_date(v):
         try:
-            return datetime.fromisoformat(value) if value else datetime.now()
+            return datetime.fromisoformat(v) if v else datetime.now()
         except:
             return datetime.now()
 
-    title = payload.get("title") or "Untitled Event"
-    cityId = payload.get("cityId") or ""
-
     event_data = {
         "organizerId": userId,
-        "title": title,
-        "cityId": cityId,
+        "title": payload.get("title", "Untitled Event"),
+        "cityId": payload.get("cityId", ""),
 
         "startAt": safe_date(payload.get("startAt")),
         "endAt": safe_date(payload.get("endAt")),
@@ -133,25 +122,26 @@ def create_event(payload: dict, userId: str = Depends(get_user_id)):
 
 
 # ------------------------------------------------
-# PUBLIC STALLS ENDPOINT → GET /events/{eventId}/stalls
+# PUBLIC STALLS
 # ------------------------------------------------
 @event_router.get("/{eventId}/stalls")
 def get_event_stalls(eventId: str):
-
     if not ObjectId.is_valid(eventId):
         raise HTTPException(400, "Invalid eventId")
 
-    stalls = list(stalls_col.find({"eventId": eventId}))
+    found = list(stalls_col.find({"eventId": eventId}).sort("price", 1))
 
-    def serialize_stall(s):
-        return {
-            "id": str(s["_id"]),
-            "name": s.get("name") or s.get("stallName") or "",
-            "tier": s.get("tier", "SILVER"),
-            "price": s.get("price", 0),
-            "qtyTotal": s.get("qtyTotal", 0),
-            "qtyLeft": s.get("qtyLeft", 0),
-            "specs": s.get("specs", ""),
-        }
-
-    return {"stalls": [serialize_stall(s) for s in stalls]}
+    return {
+        "stalls": [
+            {
+                "id": str(s["_id"]),
+                "name": s.get("name", ""),
+                "tier": s.get("tier", ""),
+                "price": s.get("price", 0),
+                "qtyTotal": s.get("qtyTotal", 0),
+                "qtyLeft": s.get("qtyLeft", 0),
+                "specs": s.get("specs", ""),
+            }
+            for s in found
+        ]
+    }
