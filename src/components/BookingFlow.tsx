@@ -4,8 +4,6 @@ import {
   Check,
   CreditCard,
   Shield,
-  Calendar,
-  MapPin,
   IndianRupee,
 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -46,39 +44,28 @@ type Stall = {
   qtyTotal: number;
 };
 
-const API = import.meta.env.VITE_API_URL || "https://sharthi-api.onrender.com";
+const API =
+  import.meta.env.VITE_API_URL || "https://sharthi-api.onrender.com";
 
 function getToken(): string | null {
   return (
     localStorage.getItem("jwt") ||
-    localStorage.getItem("lp_token") ||
-    localStorage.getItem("sharthi_token")
+    localStorage.getItem("sharthi_token") ||
+    null
   );
 }
 
-async function api(path: string, init: RequestInit = {}) {
-  const headers = new Headers(init.headers);
-  headers.set("Content-Type", "application/json");
-
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-
-  const res = await fetch(`${API}${path}`, { ...init, headers });
-
-  if (!res.ok) {
-    let msg = res.statusText;
-    try {
-      const t = await res.json();
-      msg = t?.error || t?.message || msg;
-    } catch {}
-    throw new Error(msg);
+async function safeFetch(url: string) {
+  try {
+    const r = await fetch(url);
+    return await r.json();
+  } catch {
+    return null;
   }
-
-  return res.json();
 }
+
 export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
   const [step, setStep] = useState<"review" | "payment" | "success">("review");
-
   const [paymentMethod, setPaymentMethod] = useState<
     "upi" | "card" | "netbanking"
   >("upi");
@@ -88,6 +75,9 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
   const [stall, setStall] = useState<Stall | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // --------------------------------------------------
+  // LOAD BOOKING DRAFT + EVENT + STALL
+  // --------------------------------------------------
   useEffect(() => {
     const raw = localStorage.getItem("sharthi_booking_draft");
     if (!raw) {
@@ -103,28 +93,24 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
 
     (async () => {
       try {
-        const evList = await fetch(`${API}/events`)
-          .then((r) => r.json())
-          .catch(() => []);
+        // Load event
+        const ev = await safeFetch(`${API}/events/${d.eventId}`);
+        if (!cancelled) setEvent(ev || null);
 
-        const foundEvent =
-          evList.find((e: any) => String(e.id) === String(d.eventId)) || null;
-
-        if (!cancelled) setEvent(foundEvent);
-
-        const stallsRes = await fetch(`${API}/events/${d.eventId}/stalls`)
-          .then((r) => r.json())
-          .catch(() => []);
+        // Load stalls (public)
+        const stallsRes = await safeFetch(
+          `${API}/events/${d.eventId}/stalls`
+        );
 
         const stallList = Array.isArray(stallsRes)
           ? stallsRes
-          : stallsRes.stalls || [];
+          : stallsRes?.stalls || [];
 
-        const foundStall =
-          stallList.find((s: any) => String(s.id) === String(d.stallId)) ||
-          null;
+        const found = stallList.find(
+          (s: any) => String(s.id) === String(d.stallId)
+        );
 
-        if (!cancelled) setStall(foundStall);
+        if (!cancelled) setStall(found || null);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -134,6 +120,10 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
       cancelled = true;
     };
   }, [onBack]);
+
+  // --------------------------------------------------
+  // TOTALS
+  // --------------------------------------------------
   const totals = useMemo(() => {
     const base = draft?.price ?? 0;
     const platform = 0;
@@ -141,42 +131,60 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
     const total = base + platform + gst;
     return { base, platform, gst, total };
   }, [draft]);
-  const handlePayment = async () => {
+
+  // --------------------------------------------------
+  // HANDLE PAYMENT
+  // --------------------------------------------------
+  async function handlePayment() {
     if (!draft) return;
 
     const token = getToken();
     if (!token) {
-      toast.error("Please sign in to complete your booking.");
+      toast.error("Please sign in to complete booking.");
+      return;
+    }
+
+    if (!stall || stall.qtyLeft <= 0) {
+      toast.error("Stall is sold out.");
       return;
     }
 
     toast.loading("Processing payment…", { id: "pay" });
 
     try {
-      const { paymentRef } = await api("/payments/mock", {
+      // DIRECT BOOKING API (your backend handles it)
+      const r = await fetch(`${API}/bookings`, {
         method: "POST",
-        body: JSON.stringify({}),
-      });
-
-      await api("/bookings", {
-        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           eventId: draft.eventId,
           stallId: draft.stallId,
           amount: totals.total,
-          paymentRef,
+          paymentRef: "LOCALPAY-" + Date.now(),
         }),
       });
 
+      const res = await r.json();
+      if (!r.ok) throw new Error(res?.message || "Booking failed");
+
       toast.dismiss("pay");
       toast.success("Payment successful!");
-      setStep("success");
+
       localStorage.removeItem("sharthi_booking_draft");
-    } catch (e: any) {
+
+      setStep("success");
+    } catch (err: any) {
       toast.dismiss("pay");
-      toast.error(e?.message || "Payment failed");
+      toast.error(err?.message || "Payment failed");
     }
-  };
+  }
+
+  // --------------------------------------------------
+  // SUCCESS SCREEN
+  // --------------------------------------------------
   if (step === "success") {
     return (
       <div className="max-w-2xl mx-auto px-4 py-12 text-center space-y-6">
@@ -209,6 +217,10 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
       </div>
     );
   }
+
+  // --------------------------------------------------
+  // PAYMENT SCREEN
+  // --------------------------------------------------
   if (step === "payment") {
     return (
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
@@ -240,20 +252,6 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
             <PayOption value="netbanking" label="Net Banking" />
           </RadioGroup>
 
-          {paymentMethod === "upi" && (
-            <Input placeholder="yourname@upi" className="mt-3" />
-          )}
-
-          {paymentMethod === "card" && (
-            <div className="space-y-3 mt-3">
-              <Input placeholder="Card Number" />
-              <div className="grid grid-cols-2 gap-3">
-                <Input placeholder="MM/YY" />
-                <Input placeholder="CVV" />
-              </div>
-            </div>
-          )}
-
           <Separator />
 
           <Row
@@ -269,6 +267,10 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
       </div>
     );
   }
+
+  // --------------------------------------------------
+  // REVIEW SCREEN
+  // --------------------------------------------------
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -302,13 +304,6 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
 
         <Separator />
 
-        <h3 className="text-neutral-900">Billing Summary</h3>
-        <Row label="Stall Price" value={`₹${totals.base}`} />
-        <Row label="Platform Fee" value={`₹${totals.platform}`} />
-        <Row label="GST" value={`₹${totals.gst}`} />
-
-        <Separator />
-
         <Row
           label="Total"
           value={`₹${totals.total.toLocaleString()}`}
@@ -328,6 +323,7 @@ export function BookingFlow({ onSuccess, onBack }: BookingFlowProps) {
     </div>
   );
 }
+
 function Row({
   label,
   value,
@@ -359,7 +355,6 @@ function PayOption({
   return (
     <Card
       className="p-4 cursor-pointer mt-2 flex items-center gap-3"
-      onClick={() => {}}
     >
       <RadioGroupItem value={value} id={value} />
       <Label htmlFor={value} className="flex-1 cursor-pointer">
