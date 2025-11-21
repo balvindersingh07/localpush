@@ -135,43 +135,47 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
     return () => ac.abort();
   }, [eid]);
 
-  /* STEP 3 — LOAD STALLS */
-  useEffect(() => {
-    if (!eid) return;
+  /* STEP 3 — LOAD STALLS (Full Normalization) */
+useEffect(() => {
+  if (!eid) return;
 
-    const ac = new AbortController();
+  const ac = new AbortController();
+  (async () => {
+    setLoading(true);
+    try {
+      const stallsRes = await fetch(`${API}/events/${eid}/stalls`, {
+        signal: ac.signal,
+      })
+        .then((r) => r.json())
+        .catch(() => []);
 
-    (async () => {
-      setLoading(true);
-      try {
-        const stallsRes = await fetch(`${API}/events/${eid}/stalls`, {
-          signal: ac.signal,
-        })
-          .then((r) => r.json())
-          .catch(() => []);
+      const raw = Array.isArray(stallsRes)
+        ? stallsRes
+        : stallsRes?.stalls ?? [];
 
-        const raw = Array.isArray(stallsRes)
-          ? stallsRes
-          : stallsRes?.stalls ?? [];
+      const normalized: Stall[] = raw.map((s: any) => ({
+        id: String(s._id || s.id),
+        name: s.name || s.stallName || "",
+        
+        // 🔥 FIXED HERE — tier normalization
+        tier: String(s.tier ?? s.Tier ?? s.tierName ?? "SILVER")
+          .replace(/[^a-zA-Z]/g, "")
+          .toUpperCase(),
 
-        const normalized: Stall[] = raw.map((s: any) => ({
-          id: String(s._id || s.id),
-          name: s.name || s.stallName || "",
-          tier: normalizeTier(s.tier || s.Tier || s.tierName),
-          price: Number(s.price ?? s.amount ?? 0),
-          qtyTotal: Number(s.qtyTotal ?? s.qty_total ?? s.total ?? 0),
-          qtyLeft: Number(s.qtyLeft ?? s.qtyleft ?? s.qty_remaining ?? 0),
-          specs: s.specs ?? null,
-        }));
+        price: Number(s.price ?? s.amount ?? 0),
+        qtyTotal: Number(s.qtyTotal ?? s.qty_total ?? s.total ?? 0),
+        qtyLeft: Number(s.qtyLeft ?? s.qtyleft ?? s.qty_remaining ?? 0),
+        specs: s.specs ?? null,
+      }));
 
-        setStalls(normalized);
-      } finally {
-        setLoading(false);
-      }
-    })();
+      setStalls(normalized);
+    } finally {
+      setLoading(false);
+    }
+  })();
 
-    return () => ac.abort();
-  }, [eid]);
+  return () => ac.abort();
+}, [eid]);
 
   /* STEP 4 — BUILD TIER CARDS */
   const tierCards = useMemo(() => {
