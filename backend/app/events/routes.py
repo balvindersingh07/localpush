@@ -14,7 +14,7 @@ stalls_col = db["stalls"]
 
 
 # ------------------------------------------------
-# JWT → Get userId from token
+# JWT → Get userId
 # ------------------------------------------------
 def get_user_id(token: str = Depends(oauth2_scheme)):
     try:
@@ -25,7 +25,7 @@ def get_user_id(token: str = Depends(oauth2_scheme)):
 
 
 # ------------------------------------------------
-# SERIALIZER → Convert Mongo Event doc
+# SERIALIZER
 # ------------------------------------------------
 def serialize_event(e):
     if not e:
@@ -58,7 +58,7 @@ def serialize_event(e):
 # ------------------------------------------------
 # GET ALL EVENTS  → GET /events
 # ------------------------------------------------
-@event_router.get("")
+@event_router.get("/")
 def get_events(city: str | None = None, tags: str | None = None):
 
     query = {}
@@ -75,7 +75,7 @@ def get_events(city: str | None = None, tags: str | None = None):
 
 
 # ------------------------------------------------
-# GET SINGLE EVENT BY ID  → GET /events/{eventId}
+# GET SINGLE EVENT → GET /events/{eventId}
 # ------------------------------------------------
 @event_router.get("/{eventId}")
 def get_event(eventId: str):
@@ -91,40 +91,29 @@ def get_event(eventId: str):
 
 
 # ------------------------------------------------
-# CREATE EVENT  → POST /events
+# CREATE EVENT → POST /events
 # ------------------------------------------------
-@event_router.post("")
+@event_router.post("/")
 def create_event(payload: dict, userId: str = Depends(get_user_id)):
 
-    # Safe date conversion
     def safe_date(value):
         try:
             return datetime.fromisoformat(value) if value else datetime.now()
         except:
             return datetime.now()
 
-    # Required fields
     title = payload.get("title") or "Untitled Event"
     cityId = payload.get("cityId") or ""
 
-    start_date = safe_date(payload.get("startAt"))
-    end_date = safe_date(payload.get("endAt"))
-
-    # Ensure tags is always an array
-    tags = payload.get("tags", [])
-    if isinstance(tags, str):
-        tags = [t.strip().lower() for t in tags.split(",") if t.strip()]
-
     event_data = {
         "organizerId": userId,
-
         "title": title,
         "cityId": cityId,
 
-        "startAt": start_date,
-        "endAt": end_date,
+        "startAt": safe_date(payload.get("startAt")),
+        "endAt": safe_date(payload.get("endAt")),
 
-        "tags": tags,
+        "tags": payload.get("tags", []),
         "venueName": payload.get("venueName", ""),
         "location": payload.get("location", ""),
 
@@ -138,18 +127,13 @@ def create_event(payload: dict, userId: str = Depends(get_user_id)):
     }
 
     result = events.insert_one(event_data)
-
-    # Fetch event again so frontend gets full data
     new_event = events.find_one({"_id": result.inserted_id})
 
-    return {
-        "message": "Event created successfully",
-        "event": serialize_event(new_event)
-    }
+    return {"message": "Event created successfully", "event": serialize_event(new_event)}
 
 
 # ------------------------------------------------
-# GET ALL STALLS OF EVENT  → GET /events/{eventId}/stalls
+# PUBLIC STALLS ENDPOINT → GET /events/{eventId}/stalls
 # ------------------------------------------------
 @event_router.get("/{eventId}/stalls")
 def get_event_stalls(eventId: str):
