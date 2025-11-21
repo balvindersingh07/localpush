@@ -27,16 +27,33 @@ def serialize_stall(s):
         "eventId": str(s.get("eventId")),
         "organizerId": s.get("organizerId"),
         "name": s.get("name"),
-        "tier": s.get("tier"),
-        "price": s.get("price"),
-        "qtyTotal": s.get("qtyTotal"),
-        "qtyLeft": s.get("qtyLeft"),
+        "tier": s.get("tier").upper().strip(),
+        "price": int(s.get("price", 0)),
+        "qtyTotal": int(s.get("qtyTotal", 0)),
+        "qtyLeft": int(s.get("qtyLeft", 0)),
         "specs": s.get("specs", ""),
         "createdAt": s["createdAt"].isoformat() if s.get("createdAt") else None,
     }
 
 
-# ============= ORGANIZER VIEW ===============
+# ============================================================
+#  ⭐ FIX #1 → PUBLIC CREATOR ROUTE (frontend uses this)
+#      GET /events/{eventId}/stalls
+# ============================================================
+@stall_router.get("/events/{eventId}/stalls")
+def get_event_stalls(eventId: str):
+
+    if not ObjectId.is_valid(eventId):
+        raise HTTPException(400, "Invalid Event Id")
+
+    found = list(stalls.find({"eventId": ObjectId(eventId)}).sort("createdAt", 1))
+
+    return [serialize_stall(s) for s in found]
+
+
+# ============================================================
+#  ⭐ ORGANIZER VIEW (must be protected)
+# ============================================================
 @stall_router.get("/stalls/event/{eventId}")
 def get_stalls_for_organizer(eventId: str, userId: str = Depends(get_user_id)):
 
@@ -55,8 +72,10 @@ def get_stalls_for_organizer(eventId: str, userId: str = Depends(get_user_id)):
     return {"stalls": [serialize_stall(s) for s in found]}
 
 
-# ============= CREATE STALL ===============
-@stall_router.post("/events/{eventId}/stalls")
+# ============================================================
+#  ⭐ CREATE NEW STALL
+# ============================================================
+@stall_router.post("/events/{eventId}/stalls/create")
 def create_stall(eventId: str, data: dict, userId: str = Depends(get_user_id)):
 
     if not ObjectId.is_valid(eventId):
@@ -69,11 +88,13 @@ def create_stall(eventId: str, data: dict, userId: str = Depends(get_user_id)):
     if ev["organizerId"] != userId:
         raise HTTPException(403, "Unauthorized")
 
-    s_data = {
+    tier_clean = str(data.get("tier", "SILVER")).upper().strip()
+
+    new_stall = {
         "eventId": ObjectId(eventId),
         "organizerId": userId,
         "name": data.get("name"),
-        "tier": data.get("tier", "SILVER"),
+        "tier": tier_clean,
         "price": int(data.get("price")),
         "qtyTotal": int(data.get("qtyTotal")),
         "qtyLeft": int(data.get("qtyTotal")),
@@ -81,7 +102,7 @@ def create_stall(eventId: str, data: dict, userId: str = Depends(get_user_id)):
         "createdAt": datetime.utcnow(),
     }
 
-    res = stalls.insert_one(s_data)
+    res = stalls.insert_one(new_stall)
     saved = stalls.find_one({"_id": res.inserted_id})
 
     return {"message": "Stall created", "stall": serialize_stall(saved)}
