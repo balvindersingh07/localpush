@@ -64,9 +64,10 @@ type EventMeta = {
 const API =
   import.meta.env.VITE_API_URL || "https://sharthi-api.onrender.com";
 
-// Valid ID?
-const isRealId = (id?: string | null) =>
-  !!id && id.length >= 24 && /^[a-z0-9]+$/i.test(id || "");
+const normalizeTier = (t: any) =>
+  String(t || "")
+    .replace(/[^A-Za-z]/g, "")
+    .toUpperCase();
 
 export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) {
   const [eid, setEid] = useState<string | null>(null);
@@ -74,11 +75,14 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [eventMeta, setEventMeta] = useState<EventMeta | null>(null);
 
-  /* -------------------------------------------------
-     STEP 1 — LOAD ALL EVENTS → Resolve final event ID
-  ------------------------------------------------- */
+  // VALID MONGODB ID?
+  const isRealId = (id?: string | null) =>
+    !!id && id.length >= 24 && /^[a-fA-F0-9]+$/.test(id);
+
+  /* STEP 1 — RESOLVE EVENT ID */
   useEffect(() => {
     const ac = new AbortController();
+
     (async () => {
       try {
         const list: EventMeta[] = await fetch(`${API}/events`, {
@@ -92,9 +96,9 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
         if (isRealId(eventId) && list.some((e) => e.id === eventId)) {
           resolved = eventId!;
         } else if (list.length) {
-          resolved = list[0].id; // fallback first event
+          resolved = list[0].id;
         } else {
-          toast.error("No events found. Please seed the database.");
+          toast.error("No events found.");
           onBack();
           return;
         }
@@ -110,13 +114,12 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
     return () => ac.abort();
   }, [eventId]);
 
-  /* -------------------------------------------------
-     STEP 2 — LOAD FULL EVENT DETAILS
-  ------------------------------------------------- */
+  /* STEP 2 — LOAD EVENT DETAILS */
   useEffect(() => {
     if (!eid) return;
 
     const ac = new AbortController();
+
     (async () => {
       try {
         const detail: EventMeta = await fetch(`${API}/events/${eid}`, {
@@ -132,13 +135,12 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
     return () => ac.abort();
   }, [eid]);
 
-  /* -------------------------------------------------
-     STEP 3 — LOAD STALLS (Full Normalization)
-  ------------------------------------------------- */
+  /* STEP 3 — LOAD STALLS */
   useEffect(() => {
     if (!eid) return;
 
     const ac = new AbortController();
+
     (async () => {
       setLoading(true);
       try {
@@ -155,7 +157,7 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
         const normalized: Stall[] = raw.map((s: any) => ({
           id: String(s._id || s.id),
           name: s.name || s.stallName || "",
-          tier: String(s.tier ?? s.Tier ?? s.tierName ?? "SILVER").toUpperCase(),
+          tier: normalizeTier(s.tier || s.Tier || s.tierName),
           price: Number(s.price ?? s.amount ?? 0),
           qtyTotal: Number(s.qtyTotal ?? s.qty_total ?? s.total ?? 0),
           qtyLeft: Number(s.qtyLeft ?? s.qtyleft ?? s.qty_remaining ?? 0),
@@ -171,27 +173,24 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
     return () => ac.abort();
   }, [eid]);
 
-  /* -------------------------------------------------
-     STEP 4 — BUILD STALL TIER CARDS (GOLD / SILVER / BRONZE)
-  ------------------------------------------------- */
+  /* STEP 4 — BUILD TIER CARDS */
   const tierCards = useMemo(() => {
     const byTier = new Map<string, Stall[]>();
 
-    for (const s of stalls) {
-      const key = s.tier.toUpperCase();
+    stalls.forEach((s) => {
+      const key = s.tier;
       const arr = byTier.get(key) || [];
       arr.push(s);
       byTier.set(key, arr);
-    }
+    });
 
     const mkCard = (key: string, label: string, features: string[], popular?: boolean) => {
       const arr = byTier.get(key) || [];
-      const total = arr.reduce((t, s) => t + (s.qtyTotal || 0), 0);
-      const left = arr.reduce((t, s) => t + (s.qtyLeft || 0), 0);
 
-      // fallback price
+      const total = arr.reduce((t, s) => t + s.qtyTotal, 0);
+      const left = arr.reduce((t, s) => t + s.qtyLeft, 0);
       const price = arr.length
-        ? Math.round(arr.reduce((t, s) => t + (s.price || 0), 0) / arr.length)
+        ? Math.min(...arr.map((s) => s.price))
         : key === "GOLD"
         ? 12000
         : key === "SILVER"
@@ -199,7 +198,7 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
         : 5000;
 
       return {
-        id: key.toLowerCase(),
+        id: key,
         name: label,
         price,
         size: key === "GOLD" ? "15x15 ft" : key === "SILVER" ? "12x12 ft" : "10x10 ft",
@@ -229,13 +228,11 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
     ];
   }, [stalls]);
 
-  /* -------------------------------------------------
-     STEP 5 — SELECT TIER → SAVE DRAFT → GO TO BOOKING FLOW
-  ------------------------------------------------- */
-  const onSelectTier = (tierCard: any) => {
+  /* STEP 5 — SELECT TIER */
+  const onSelectTier = (tier: any) => {
     if (!eid) return;
 
-    if (!tierCard.sampleStallId || (tierCard.total > 0 && tierCard.available <= 0)) {
+    if (!tier.sampleStallId || tier.available <= 0) {
       toast.info("No stalls left in this tier.");
       return;
     }
@@ -244,9 +241,9 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
       "sharthi_booking_draft",
       JSON.stringify({
         eventId: eid,
-        stallId: tierCard.sampleStallId,
-        tier: tierCard.name,
-        price: tierCard.price,
+        stallId: tier.sampleStallId,
+        tier: tier.name,
+        price: tier.price,
       })
     );
 
@@ -258,9 +255,7 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
     .map((s) => s.trim())
     .filter(Boolean)[0];
 
-  /* -------------------------------------------------
-     UI — SAME AS FIGMA (NO BREAK)
-  ------------------------------------------------- */
+  /* UI */
   return (
     <div className="max-w-7xl mx-auto">
       <div className="relative h-64 md:h-96">
@@ -270,7 +265,12 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
           className="w-full h-full object-cover"
         />
 
-        <Button variant="secondary" size="sm" className="absolute top-4 left-4" onClick={onBack}>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="absolute top-4 left-4"
+          onClick={onBack}
+        >
           <ArrowLeft size={18} />
         </Button>
 
@@ -280,9 +280,9 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
       </div>
 
       <div className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {/* HEADER */}
         <div>
           <h1 className="text-neutral-900 mb-2">{eventMeta?.title || "Event"}</h1>
+
           <div className="flex flex-wrap gap-4 text-neutral-600">
             <div className="flex items-center gap-2">
               <Calendar size={18} />
@@ -303,21 +303,22 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
               <span>Expected attendees</span>
             </div>
 
-            {/* RATING */}
             {typeof eventMeta?.ratingAvg === "number" &&
               (eventMeta.ratingCount || 0) > 0 && (
                 <div className="flex items-center gap-1">
                   <Star size={18} className="text-warning fill-warning" />
                   <span className="text-neutral-800 text-sm">
                     {eventMeta.ratingAvg}
-                    <span className="text-neutral-500"> ({eventMeta.ratingCount} reviews)</span>
+                    <span className="text-neutral-500">
+                      {" "}
+                      ({eventMeta.ratingCount} reviews)
+                    </span>
                   </span>
                 </div>
               )}
           </div>
         </div>
 
-        {/* ORGANIZER */}
         <Card className="p-4 flex items-center gap-4">
           <div className="w-12 h-12 rounded-full bg-gradient-to-br from-secondary to-accent flex items-center justify-center text-white">
             EV
@@ -329,17 +330,24 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
 
           <Dialog>
             <DialogTrigger asChild>
-              <Button variant="outline" size="sm">Contact</Button>
+              <Button variant="outline" size="sm">
+                Contact
+              </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Contact Organizer</DialogTitle>
-                <DialogDescription>Send a message to the organizer</DialogDescription>
+                <DialogDescription>
+                  Send a message to the organizer
+                </DialogDescription>
               </DialogHeader>
 
               <div className="space-y-4 py-4">
                 <Textarea placeholder="Type your message..." rows={6} />
-                <Button className="w-full" onClick={() => toast.success("Message sent!")}>
+                <Button
+                  className="w-full"
+                  onClick={() => toast.success("Message sent!")}
+                >
                   Send Message
                 </Button>
               </div>
@@ -347,7 +355,6 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
           </Dialog>
         </Card>
 
-        {/* TABS */}
         <Tabs defaultValue="stalls" className="w-full">
           <TabsList className="w-full grid grid-cols-3">
             <TabsTrigger value="stalls">Stalls</TabsTrigger>
@@ -355,7 +362,6 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
             <TabsTrigger value="faqs">FAQs</TabsTrigger>
           </TabsList>
 
-          {/* STALLS */}
           <TabsContent value="stalls" className="space-y-4 mt-6">
             <div className="flex items-center gap-2 p-3 bg-accent/10 rounded-xl border border-accent/20">
               <Info size={18} className="text-accent shrink-0" />
@@ -369,7 +375,9 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
                 {tierCards.map((tier) => (
                   <Card
                     key={tier.id}
-                    className={`p-6 relative ${tier.popular ? "border-2 border-primary" : ""}`}
+                    className={`p-6 relative ${
+                      tier.popular ? "border-2 border-primary" : ""
+                    }`}
                   >
                     {tier.popular && (
                       <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary">
@@ -381,14 +389,19 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
 
                     <div className="flex items-baseline gap-1 mb-4">
                       <IndianRupee size={20} className="text-primary" />
-                      <span className="text-primary">{tier.price.toLocaleString()}</span>
+                      <span className="text-primary">
+                        {tier.price.toLocaleString()}
+                      </span>
                     </div>
 
                     <p className="text-neutral-600 text-sm mb-4">{tier.size}</p>
 
                     <ul className="space-y-2 mb-6">
                       {tier.features.map((f) => (
-                        <li key={f} className="flex items-center gap-2 text-neutral-700 text-sm">
+                        <li
+                          key={f}
+                          className="flex items-center gap-2 text-neutral-700 text-sm"
+                        >
                           <div className="w-1.5 h-1.5 rounded-full bg-accent" />
                           <span>{f}</span>
                         </li>
@@ -399,7 +412,9 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
                       <div className="flex justify-between text-sm mb-1">
                         <span className="text-neutral-600">Available</span>
                         <span className="text-neutral-900">
-                          {tier.total > 0 ? `${tier.available}/${tier.total}` : tier.available}
+                          {tier.total > 0
+                            ? `${tier.available}/${tier.total}`
+                            : tier.available}
                         </span>
                       </div>
 
@@ -409,7 +424,10 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
                           style={{
                             width:
                               tier.total > 0
-                                ? `${Math.max(3, (tier.available / tier.total) * 100)}%`
+                                ? `${Math.max(
+                                    3,
+                                    (tier.available / tier.total) * 100
+                                  )}%`
                                 : "100%",
                           }}
                         />
@@ -420,9 +438,9 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
                       className="w-full"
                       variant={tier.popular ? "default" : "outline"}
                       onClick={() => onSelectTier(tier)}
-                      disabled={tier.total > 0 && tier.available <= 0}
+                      disabled={tier.available <= 0}
                     >
-                      {tier.total > 0 && tier.available <= 0 ? "Sold Out" : "Select Tier"}
+                      {tier.available <= 0 ? "Sold Out" : "Select Tier"}
                     </Button>
                   </Card>
                 ))}
@@ -430,7 +448,6 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
             )}
           </TabsContent>
 
-          {/* DETAILS */}
           <TabsContent value="details" className="space-y-6 mt-6">
             <div>
               <h4 className="text-neutral-900 mb-3">About the Event</h4>
@@ -465,17 +482,22 @@ export function EventDetail({ eventId, onBookStall, onBack }: EventDetailProps) 
             </div>
           </TabsContent>
 
-          {/* FAQS */}
           <TabsContent value="faqs" className="mt-6">
             <Accordion type="single" collapsible>
               <AccordionItem value="item-1">
-                <AccordionTrigger>What payment methods do you accept?</AccordionTrigger>
-                <AccordionContent>UPI, Cards, Netbanking are supported.</AccordionContent>
+                <AccordionTrigger>
+                  What payment methods do you accept?
+                </AccordionTrigger>
+                <AccordionContent>
+                  UPI, Cards, Netbanking are supported.
+                </AccordionContent>
               </AccordionItem>
 
               <AccordionItem value="item-2">
                 <AccordionTrigger>Cancellation Policy?</AccordionTrigger>
-                <AccordionContent>Full refund 14+ days before the event.</AccordionContent>
+                <AccordionContent>
+                  Full refund 14+ days before the event.
+                </AccordionContent>
               </AccordionItem>
             </Accordion>
 
