@@ -12,6 +12,7 @@ event_router = APIRouter(tags=["Events"])
 events = db["events"]
 stalls_col = db["stalls"]
 
+
 # ------------------------------------------------
 # JWT → Get userId
 # ------------------------------------------------
@@ -24,7 +25,7 @@ def get_user_id(token: str = Depends(oauth2_scheme)):
 
 
 # ------------------------------------------------
-# SERIALIZER (FULL FE COMPATIBLE)
+# SERIALIZER
 # ------------------------------------------------
 def serialize_event(e):
     return {
@@ -122,14 +123,17 @@ def create_event(payload: dict, userId: str = Depends(get_user_id)):
 
 
 # ------------------------------------------------
-# PUBLIC STALLS
+# PUBLIC STALLS — FIXED (MUST CONVERT OBJECTID)
 # ------------------------------------------------
 @event_router.get("/{eventId}/stalls")
 def get_event_stalls(eventId: str):
+
     if not ObjectId.is_valid(eventId):
         raise HTTPException(400, "Invalid eventId")
 
-    found = list(stalls_col.find({"eventId": eventId}).sort("price", 1))
+    found = list(
+        stalls_col.find({"eventId": ObjectId(eventId)}).sort("price", 1)
+    )
 
     return {
         "stalls": [
