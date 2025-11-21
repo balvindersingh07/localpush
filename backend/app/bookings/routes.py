@@ -6,7 +6,6 @@ from app.config import settings
 from bson import ObjectId
 from datetime import datetime
 from typing import Optional
-
 from pydantic import BaseModel
 
 from .schemas import ReviewRequest, InvoiceResponse
@@ -33,72 +32,80 @@ def get_user_id(token: str = Depends(oauth2_scheme)):
 
 
 # ========================================
-# NEW: CREATE BOOKING
-# POST: /bookings/create
+# REQUEST MODEL
 # ========================================
-
 class CreateBookingRequest(BaseModel):
     eventId: str
     stallId: str
-    amount: Optional[float] = None      # optional, fallback = stall.price
-    paymentMethod: Optional[str] = "online"  # future use
+    amount: Optional[float] = None
+    paymentMethod: Optional[str] = "online"
 
 
+# ========================================
+# CREATE BOOKING (FIXED)
+# POST: /bookings/create
+# ========================================
 @booking_router.post("/create")
 def create_booking(
     data: CreateBookingRequest,
     userId: str = Depends(get_user_id),
 ):
-    """
-    Create a new booking for given event + stall.
-    Body:
-    {
-      "eventId": "...",
-      "stallId": "...",
-      "amount": 8000   # optional
-    }
-    """
 
-    # --- Validate event ---
+    # -----------------------------
+    # Validate EVENT
+    # -----------------------------
     try:
         event_obj_id = ObjectId(data.eventId)
-    except Exception:
+    except:
         raise HTTPException(400, "Invalid eventId")
 
     event = events_collection.find_one({"_id": event_obj_id})
     if not event:
         raise HTTPException(404, "Event not found")
 
-    # --- Validate stall ---
+    # -----------------------------
+    # Validate STALL
+    # -----------------------------
     try:
         stall_obj_id = ObjectId(data.stallId)
-    except Exception:
+    except:
         raise HTTPException(400, "Invalid stallId")
 
     stall = stalls_collection.find_one({"_id": stall_obj_id})
     if not stall:
         raise HTTPException(404, "Stall not found")
 
-    # Optional: ensure stall belongs to same event
-    event_id_in_stall = stall.get("eventId") or stall.get("event") or None
-    if event_id_in_stall and str(event_id_in_stall) not in {
-        data.eventId,
-        str(event_obj_id),
-    }:
+    # Stall must belong to event
+    stall_event_id = str(stall.get("eventId"))
+    if stall_event_id != data.eventId:
         raise HTTPException(400, "Stall does not belong to this event")
 
-    # --- Amount / price ---
-    amount = data.amount
-    if amount is None:
-        amount = float(stall.get("price", 0) or 0)
+    # Stall availability
+    if stall.get("qtyLeft", 0) <= 0:
+        raise HTTPException(400, "Stall is sold out")
 
-    # --- Build booking doc ---
+    # Prevent duplicate booking of same stall
+    existing = bookings_collection.find_one({
+        "creatorId": userId,
+        "stall": str(stall_obj_id)
+    })
+    if existing:
+        raise HTTPException(400, "You have already booked this stall")
+
+    # -----------------------------
+    # Determine AMOUNT
+    # -----------------------------
+    amount = float(data.amount or stall.get("price") or 0)
+
+    # -----------------------------
+    # CREATE BOOKING
+    # -----------------------------
     booking_doc = {
         "creatorId": userId,
-        "event": str(event_obj_id),   # we keep ids as strings for simplicity
+        "event": str(event_obj_id),
         "stall": str(stall_obj_id),
         "amount": amount,
-        "status": "PAID",             # or "PENDING" if you later add payment gateway
+        "status": "PAID",
         "paymentMethod": data.paymentMethod or "online",
         "createdAt": datetime.utcnow().isoformat(),
         "reviewed": False,
@@ -107,6 +114,17 @@ def create_booking(
     res = bookings_collection.insert_one(booking_doc)
     booking_id = str(res.inserted_id)
 
+    # -----------------------------
+    # 🔥 FIX: Reduce Stall qtyLeft
+    # -----------------------------
+    stalls_collection.update_one(
+        {"_id": stall_obj_id},
+        {"$inc": {"qtyLeft": -1}}
+    )
+
+    # -----------------------------
+    # RESPONSE
+    # -----------------------------
     return {
         "id": booking_id,
         "status": booking_doc["status"],
@@ -129,7 +147,6 @@ def create_booking(
 
 # -------------------------------------------------
 # GET: /bookings/my
-# Full detailed booking list (used by frontend)
 # -------------------------------------------------
 @booking_router.get("/my")
 def get_my_bookings(userId: str = Depends(get_user_id)):
@@ -140,28 +157,24 @@ def get_my_bookings(userId: str = Depends(get_user_id)):
     for b in bookings:
 
         # EVENT
-        event = b.get("event")
-        if isinstance(event, str):
-            try:
-                event = events_collection.find_one({"_id": ObjectId(event)})
-            except Exception:
-                event = None
+        event = None
+        try:
+            event = events_collection.find_one({"_id": ObjectId(b.get("event"))})
+        except:
+            pass
 
         # STALL
-        stall = b.get("stall")
-        if isinstance(stall, str):
-            try:
-                stall = stalls_collection.find_one({"_id": ObjectId(stall)})
-            except Exception:
-                stall = None
-
-        created = b.get("createdAt")
+        stall = None
+        try:
+            stall = stalls_collection.find_one({"_id": ObjectId(b.get("stall"))})
+        except:
+            pass
 
         result.append({
             "id": str(b["_id"]),
             "status": b.get("status", "PAID"),
             "amount": b.get("amount", stall.get("price") if stall else 0),
-            "createdAt": created,
+            "createdAt": b.get("createdAt"),
             "event": {
                 "title": event.get("title") if event else "",
                 "cityId": event.get("cityId") if event else "",
@@ -179,122 +192,119 @@ def get_my_bookings(userId: str = Depends(get_user_id)):
 
 
 # -------------------------------------------------
-# GET: /bookings/upcoming
+# UPCOMING BOOKINGS
 # -------------------------------------------------
 @booking_router.get("/upcoming")
 def get_upcoming_bookings(userId: str = Depends(get_user_id)):
 
     today = datetime.utcnow()
-
     bookings = list(bookings_collection.find({"creatorId": userId}))
     result = []
 
     for b in bookings:
 
-        event = b.get("event")
-        if isinstance(event, str):
-            try:
-                event = events_collection.find_one({"_id": ObjectId(event)})
-            except Exception:
-                event = None
+        # EVENT
+        event = None
+        try:
+            event = events_collection.find_one({"_id": ObjectId(b.get("event"))})
+        except:
+            continue
 
         if not event or not event.get("startAt"):
             continue
 
-        eventStart = datetime.fromisoformat(event["startAt"])
+        event_start = datetime.fromisoformat(event["startAt"])
+        if event_start <= today:
+            continue
 
-        if eventStart > today:
-            # stall
-            stall = b.get("stall")
-            if isinstance(stall, str):
-                try:
-                    stall = stalls_collection.find_one({"_id": ObjectId(stall)})
-                except Exception:
-                    stall = None
+        # STALL
+        stall = None
+        try:
+            stall = stalls_collection.find_one({"_id": ObjectId(b.get("stall"))})
+        except:
+            pass
 
-            result.append({
-                "id": str(b["_id"]),
-                "status": b.get("status", "PAID"),
-                "amount": b.get("amount", stall.get("price") if stall else 0),
-                "event": {
-                    "title": event.get("title"),
-                    "cityId": event.get("cityId"),
-                    "startAt": event.get("startAt"),
-                    "endAt": event.get("endAt"),
-                },
-                "stall": {
-                    "name": stall.get("name") if stall else "",
-                    "tier": stall.get("tier") if stall else "",
-                    "price": stall.get("price") if stall else 0,
-                }
-            })
+        result.append({
+            "id": str(b["_id"]),
+            "status": b.get("status", "PAID"),
+            "amount": b.get("amount", stall.get("price") if stall else 0),
+            "event": {
+                "title": event.get("title"),
+                "cityId": event.get("cityId"),
+                "startAt": event.get("startAt"),
+                "endAt": event.get("endAt"),
+            },
+            "stall": {
+                "name": stall.get("name") if stall else "",
+                "tier": stall.get("tier") if stall else "",
+                "price": stall.get("price") if stall else 0,
+            }
+        })
 
     return result
 
 
 # -------------------------------------------------
-# GET: /bookings/past
+# PAST BOOKINGS
 # -------------------------------------------------
 @booking_router.get("/past")
 def get_past_bookings(userId: str = Depends(get_user_id)):
 
     today = datetime.utcnow()
-
     bookings = list(bookings_collection.find({"creatorId": userId}))
     result = []
 
     for b in bookings:
 
-        event = b.get("event")
-        if isinstance(event, str):
-            try:
-                event = events_collection.find_one({"_id": ObjectId(event)})
-            except Exception:
-                event = None
+        # EVENT
+        event = None
+        try:
+            event = events_collection.find_one({"_id": ObjectId(b.get("event"))})
+        except:
+            continue
 
         if not event or not event.get("startAt"):
             continue
 
-        eventStart = datetime.fromisoformat(event["startAt"])
+        event_start = datetime.fromisoformat(event["startAt"])
+        if event_start >= today:
+            continue
 
-        # past event
-        if eventStart < today:
+        # STALL
+        stall = None
+        try:
+            stall = stalls_collection.find_one({"_id": ObjectId(b.get("stall"))})
+        except:
+            pass
 
-            stall = b.get("stall")
-            if isinstance(stall, str):
-                try:
-                    stall = stalls_collection.find_one({"_id": ObjectId(stall)})
-                except Exception:
-                    stall = None
-
-            result.append({
-                "id": str(b["_id"]),
-                "status": b.get("status", "PAID"),
-                "amount": b.get("amount", stall.get("price") if stall else 0),
-                "event": {
-                    "title": event.get("title"),
-                    "cityId": event.get("cityId"),
-                    "startAt": event.get("startAt"),
-                    "endAt": event.get("endAt"),
-                },
-                "stall": {
-                    "name": stall.get("name") if stall else "",
-                    "tier": stall.get("tier") if stall else "",
-                    "price": stall.get("price") if stall else 0,
-                }
-            })
+        result.append({
+            "id": str(b["_id"]),
+            "status": b.get("status", "PAID"),
+            "amount": b.get("amount", stall.get("price") if stall else 0),
+            "event": {
+                "title": event.get("title"),
+                "cityId": event.get("cityId"),
+                "startAt": event.get("startAt"),
+                "endAt": event.get("endAt"),
+            },
+            "stall": {
+                "name": stall.get("name") if stall else "",
+                "tier": stall.get("tier") if stall else "",
+                "price": stall.get("price") if stall else 0,
+            }
+        })
 
     return result
 
 
 # -------------------------------------------------
-# POST REVIEW → /bookings/{id}/review
+# REVIEW
 # -------------------------------------------------
 @booking_router.post("/{bookingId}/review")
 def review_booking(
     bookingId: str,
     data: ReviewRequest,
-    userId: str = Depends(get_user_id),
+    userId: str = Depends(get_user_id)
 ):
 
     booking = bookings_collection.find_one({"_id": ObjectId(bookingId)})
@@ -304,43 +314,38 @@ def review_booking(
     if booking["creatorId"] != userId:
         raise HTTPException(403, "Unauthorized")
 
-    updateData = {
+    update_data = {
         "reviewed": True,
         "rating": data.rating,
     }
 
     if data.reviewText:
-        updateData["reviewText"] = data.reviewText
+        update_data["reviewText"] = data.reviewText
 
     bookings_collection.update_one(
         {"_id": ObjectId(bookingId)},
-        {"$set": updateData}
+        {"$set": update_data}
     )
 
     return {"message": "Review submitted"}
 
 
 # -------------------------------------------------
-# INVOICE → /bookings/invoice/{bookingId}
+# INVOICE
 # -------------------------------------------------
 @booking_router.get("/invoice/{bookingId}", response_model=InvoiceResponse)
 def generate_invoice(bookingId: str, userId: str = Depends(get_user_id)):
 
     booking = bookings_collection.find_one({"_id": ObjectId(bookingId)})
-
     if not booking:
         raise HTTPException(404, "Booking not found")
 
     if booking["creatorId"] != userId:
         raise HTTPException(403, "Unauthorized")
 
-    eventId = booking["event"]
-    stallId = booking["stall"]
+    event = events_collection.find_one({"_id": ObjectId(booking["event"])})
+    stall = stalls_collection.find_one({"_id": ObjectId(booking["stall"])})
 
-    event = events_collection.find_one({"_id": ObjectId(eventId)})
-    stall = stalls_collection.find_one({"_id": ObjectId(stallId)})
-
-    # invoice dummy URL
     invoiceUrl = f"https://sharthi.in/invoices/{bookingId}.pdf"
 
     return {
