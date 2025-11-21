@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from bson import ObjectId
-
 from datetime import datetime
+
 from app.database import db
 from app.auth.routes import oauth2_scheme
 from app.config import settings
 from jose import jwt
-
 
 stall_router = APIRouter(tags=["Stalls"])
 
@@ -47,29 +46,41 @@ def serialize_stall(s):
 
 
 # ------------------------------------------------
-# GET ALL STALLS FOR EVENT
+# PUBLIC → GET ALL STALLS FOR EVENT (NO LOGIN)
 # ------------------------------------------------
 @stall_router.get("/events/{eventId}/stalls")
-def get_stalls(eventId: str, userId: str = Depends(get_user_id)):
+def get_stalls_public(eventId: str):
 
     if not ObjectId.is_valid(eventId):
         raise HTTPException(400, "Invalid eventId")
 
-    # Ensure event exists
+    found = list(stalls.find({"eventId": eventId}).sort("createdAt", -1))
+
+    return {"stalls": [serialize_stall(s) for s in found]}
+
+
+# ------------------------------------------------
+# ORGANIZER → GET STALLS (Protected)
+# ------------------------------------------------
+@stall_router.get("/organizer/events/{eventId}/stalls")
+def get_stalls_organizer(eventId: str, userId: str = Depends(get_user_id)):
+
+    if not ObjectId.is_valid(eventId):
+        raise HTTPException(400, "Invalid eventId")
+
     ev = events.find_one({"_id": ObjectId(eventId)})
     if not ev:
         raise HTTPException(404, "Event not found")
 
-    # Organizer can only view their own event stalls
     if ev.get("organizerId") != userId:
-        raise HTTPException(403, "You are not authorized for this event")
+        raise HTTPException(403, "Not authorized")
 
     found = list(stalls.find({"eventId": eventId}).sort("createdAt", -1))
     return {"stalls": [serialize_stall(s) for s in found]}
 
 
 # ------------------------------------------------
-# CREATE NEW STALL
+# CREATE NEW STALL (Organizer only)
 # ------------------------------------------------
 @stall_router.post("/events/{eventId}/stalls")
 def create_stall(eventId: str, data: dict, userId: str = Depends(get_user_id)):
@@ -77,12 +88,10 @@ def create_stall(eventId: str, data: dict, userId: str = Depends(get_user_id)):
     if not ObjectId.is_valid(eventId):
         raise HTTPException(400, "Invalid eventId")
 
-    # Ensure event exists
     ev = events.find_one({"_id": ObjectId(eventId)})
     if not ev:
         raise HTTPException(404, "Event not found")
 
-    # Organizer only
     if ev.get("organizerId") != userId:
         raise HTTPException(403, "You are not authorized to add stalls")
 
@@ -112,7 +121,7 @@ def create_stall(eventId: str, data: dict, userId: str = Depends(get_user_id)):
 
 
 # ------------------------------------------------
-# EDIT STALL
+# EDIT STALL (Organizer only)
 # ------------------------------------------------
 @stall_router.patch("/stalls/{stallId}")
 def edit_stall(stallId: str, data: dict, userId: str = Depends(get_user_id)):
@@ -124,7 +133,6 @@ def edit_stall(stallId: str, data: dict, userId: str = Depends(get_user_id)):
     if not s:
         raise HTTPException(404, "Stall not found")
 
-    # Organizer only
     if s.get("organizerId") != userId:
         raise HTTPException(403, "Not authorized")
 
@@ -156,7 +164,7 @@ def edit_stall(stallId: str, data: dict, userId: str = Depends(get_user_id)):
 
 
 # ------------------------------------------------
-# DELETE STALL
+# DELETE STALL (Organizer only)
 # ------------------------------------------------
 @stall_router.delete("/stalls/{stallId}")
 def delete_stall(stallId: str, userId: str = Depends(get_user_id)):
@@ -168,11 +176,9 @@ def delete_stall(stallId: str, userId: str = Depends(get_user_id)):
     if not s:
         raise HTTPException(404, "Stall not found")
 
-    # Organizer only
     if s.get("organizerId") != userId:
         raise HTTPException(403, "Not authorized")
 
-    # If stall already sold, prevent deletion
     sold = s["qtyTotal"] - s["qtyLeft"]
     if sold > 0:
         raise HTTPException(400, "Cannot delete stall that has bookings")
